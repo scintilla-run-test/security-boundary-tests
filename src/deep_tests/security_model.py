@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import json
 import re
 import time
 import urllib.parse
@@ -102,3 +103,74 @@ class ReplayWindow:
         self.seen[nonce] = timestamp
         cutoff = current - self.max_skew_seconds
         self.seen = {key: seen_at for key, seen_at in self.seen.items() if seen_at >= cutoff}
+
+
+_INVOCATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+
+
+def validate_stdio_response(
+    wire: bytes,
+    expected_invocation_id: str,
+    *,
+    max_output_bytes: int = 1024 * 1024,
+) -> dict[str, object]:
+    """Fail-closed oracle for one `stdio-json-v1` InvocationResponse line.
+
+    The production runner owns process I/O and timeout enforcement. This model
+    captures the security boundary expected from that runner before a response
+    is admitted: one bounded UTF-8 JSON line, sealed v1 object shapes, exact
+    invocation identity, and bounded stable error metadata.
+    """
+
+    if not _INVOCATION_ID.fullmatch(expected_invocation_id):
+        raise BoundaryViolation("expected invocation id is invalid")
+    if max_output_bytes < 1 or len(wire) > max_output_bytes:
+        raise BoundaryViolation("lambda stdout exceeded configured byte ceiling")
+    if b"\x00" in wire:
+        raise BoundaryViolation("lambda stdout contains NUL")
+    if not wire.endswith(b"\n") or wire.count(b"\n") != 1:
+        raise BoundaryViolation("lambda stdout must contain exactly one JSON line")
+
+    try:
+        text = wire[:-1].decode("utf-8", errors="strict")
+        value = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BoundaryViolation("lambda stdout is not valid UTF-8 JSON") from exc
+
+    if not isinstance(value, dict) or set(value) != {"protocol", "invocationId", "result"}:
+        raise BoundaryViolation("InvocationResponse must be a sealed object")
+    if value["protocol"] != "stdio-json-v1":
+        raise BoundaryViolation("unsupported invocation protocol")
+
+    invocation_id = value["invocationId"]
+    if not isinstance(invocation_id, str) or not _INVOCATION_ID.fullmatch(invocation_id):
+        raise BoundaryViolation("response invocationId is invalid")
+    if invocation_id != expected_invocation_id:
+        raise BoundaryViolation("response invocationId does not match request")
+
+    result = value["result"]
+    if not isinstance(result, dict) or not isinstance(result.get("status"), str):
+        raise BoundaryViolation("response result is invalid")
+    if result["status"] == "ok":
+        if set(result) != {"status", "payload"}:
+            raise BoundaryViolation("InvocationSuccess must be a sealed object")
+    elif result["status"] == "error":
+        if set(result) != {"status", "error"} or not isinstance(result["error"], dict):
+            raise BoundaryViolation("InvocationFailure must be a sealed object")
+        error = result["error"]
+        if set(error) != {"code", "message", "retryable"}:
+            raise BoundaryViolation("InvocationError must be a sealed object")
+        code = error["code"]
+        message = error["message"]
+        retryable = error["retryable"]
+        if not isinstance(code, str) or not _ERROR_CODE.fullmatch(code):
+            raise BoundaryViolation("InvocationError code is invalid")
+        if not isinstance(message, str) or not 1 <= len(message) <= 4096:
+            raise BoundaryViolation("InvocationError message is out of bounds")
+        if not isinstance(retryable, bool):
+            raise BoundaryViolation("InvocationError retryable must be boolean")
+    else:
+        raise BoundaryViolation("unknown invocation result status")
+
+    return value
