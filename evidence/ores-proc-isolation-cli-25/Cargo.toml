@@ -1,0 +1,19 @@
+[package]
+name = "ores-proc-isolation-attestation-proof"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"
+pedantic = "allow"
+nursery = "allow"
