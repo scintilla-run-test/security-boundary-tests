@@ -93,9 +93,7 @@ pub fn attest_linux_process(pid: u32) -> Result<LinuxProcessAttestation> {
 
 fn verify_no_new_privs(status: &str, pid: u32) -> Result<()> {
     let value = status_field(status, "NoNewPrivs").ok_or_else(|| {
-        Error::SandboxUnavailable(format!(
-            "tenant PID {pid} status is missing NoNewPrivs"
-        ))
+        Error::SandboxUnavailable(format!("tenant PID {pid} status is missing NoNewPrivs"))
     })?;
     if value != "1" {
         return Err(Error::SandboxUnavailable(format!(
@@ -108,9 +106,7 @@ fn verify_no_new_privs(status: &str, pid: u32) -> Result<()> {
 fn verify_zero_capabilities(status: &str, pid: u32) -> Result<()> {
     for field in CAPABILITY_FIELDS {
         let value = status_field(status, field).ok_or_else(|| {
-            Error::SandboxUnavailable(format!(
-                "tenant PID {pid} status is missing {field}"
-            ))
+            Error::SandboxUnavailable(format!("tenant PID {pid} status is missing {field}"))
         })?;
         let mask = u128::from_str_radix(value, 16).map_err(|error| {
             Error::SandboxUnavailable(format!(
@@ -225,7 +221,8 @@ mod tests {
 
     #[test]
     fn parses_start_ticks_when_process_name_contains_spaces_and_parentheses() {
-        let stat = "4242 (tenant (beam) vm) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20";
+        let stat =
+            "4242 (tenant (beam) vm) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20";
         assert_eq!(parse_process_start_ticks(stat), Some(987654));
     }
 
