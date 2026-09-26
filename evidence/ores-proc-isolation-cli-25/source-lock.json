@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "ORESoftware/ores-proc-isolation-cli",
   "pull_request": 25,
-  "commit_sha": "617dcc53730d21bfed5180a13c55ebd83c03865c",
+  "commit_sha": "c2f30ce044041a36f61744ef73b6740b2903e514",
   "path": "src/linux_attestation.rs",
-  "git_blob_sha": "8cec5e6875b81b8f01f691d3f257aed957254092"
+  "git_blob_sha": "763e12b49ed9755d92183b5c7f51d59e61870bea"
 }
