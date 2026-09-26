@@ -1,3 +1,5 @@
+//! Live negative proof for the hosted-tenant Linux attestation boundary.
+
 #[cfg(target_os = "linux")]
 #[test]
 fn ordinary_runner_process_is_not_tenant_ready() {
