@@ -5,6 +5,8 @@
 //! routing work to it. Callers must still bind the returned process start
 //! identity to their systemd scope/cgroup and lifecycle fencing record.
 
+#![allow(clippy::needless_return)]
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
