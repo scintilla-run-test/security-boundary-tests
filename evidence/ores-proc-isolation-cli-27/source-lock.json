@@ -1,0 +1,7 @@
+{
+  "repository": "ORESoftware/ores-proc-isolation-cli",
+  "pull_request": 27,
+  "commit_sha": "82dbb9fbdf4e8b710b23888cbe1746b159188284",
+  "path": "tests/policy_contract_authority.rs",
+  "git_blob_sha": "e2fbcef4941b27ac8da4f5ff550d81040778ca90"
+}
