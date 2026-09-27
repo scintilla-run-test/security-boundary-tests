@@ -28,7 +28,7 @@ cross_owner_resume_is_rejected_test() ->
         after 1000 ->
             error(owner_quiesce_timeout)
         end,
-        ?assertMatch({error, {runtime_control_failed, _}}, bmscl_runtime:resume(Handle)),
+        ?assertEqual({error, invalid_drain}, bmscl_runtime:resume(Handle)),
         Owner ! resume,
         receive
             {owner_resume, ok} ->
