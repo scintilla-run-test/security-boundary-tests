@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: beamscale/bmscl-supervisor
-          ref: 92ebf108d8a1d13b6b136d05a236f02ec01467e8
+          ref: 1f1bb4a7d7e71b1198868e13b72727fccc9d2a76
           path: beamscale
           persist-credentials: false
 
@@ -35,7 +35,7 @@ jobs:
 
       - name: Verify exact source revision
         working-directory: beamscale
-        run: test "$(git rev-parse HEAD)" = 92ebf108d8a1d13b6b136d05a236f02ec01467e8
+        run: test "$(git rev-parse HEAD)" = 1f1bb4a7d7e71b1198868e13b72727fccc9d2a76
 
       - name: Compile
         working-directory: beamscale
