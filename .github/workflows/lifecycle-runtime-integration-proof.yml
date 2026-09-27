@@ -1,0 +1,106 @@
+name: Lifecycle runtime integration proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lifecycle-runtime-integration-proof.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lifecycle-runtime-integration-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  beamscale-supervisor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact BeamScale PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: beamscale/bmscl-supervisor
+          ref: 92ebf108d8a1d13b6b136d05a236f02ec01467e8
+          path: beamscale
+          persist-credentials: false
+
+      - name: Install BeamScale toolchain
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+          rebar3-version: '3.24.0'
+          gleam-version: '1.18.0'
+
+      - name: Verify exact source revision
+        working-directory: beamscale
+        run: test "$(git rev-parse HEAD)" = 92ebf108d8a1d13b6b136d05a236f02ec01467e8
+
+      - name: Compile
+        working-directory: beamscale
+        run: rebar3 compile
+
+      - name: EUnit
+        working-directory: beamscale
+        run: rebar3 eunit
+
+      - name: Xref
+        working-directory: beamscale
+        run: rebar3 xref
+
+  scintilla-runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Scintilla PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: scintilla-run/gleam-lambda-runner
+          ref: a304a8584265c5bfcb4511d70e733bab6bf294a8
+          path: scintilla
+          persist-credentials: false
+
+      - name: Install Scintilla toolchain
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27'
+          gleam-version: '1.17.0'
+
+      - name: Verify exact source revision
+        working-directory: scintilla
+        run: test "$(git rev-parse HEAD)" = a304a8584265c5bfcb4511d70e733bab6bf294a8
+
+      - name: Format changed Gleam source
+        working-directory: scintilla
+        run: gleam format --check src/gleam_lambda_runner/actors.gleam
+
+      - name: Compile changed Erlang lifecycle surface
+        working-directory: scintilla
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/scintilla-lifecycle-proof
+          erlc +warnings_as_errors -o /tmp/scintilla-lifecycle-proof \
+            src/lambda_actor_alarm.erl \
+            src/lambda_actor_lifecycle.erl \
+            src/lambda_host_lifecycle.erl \
+            src/lambda_host_lifecycle_socket.erl \
+            src/lambda_invocation_observer.erl \
+            src/lambda_runtime_supervisor.erl \
+            test/lambda_host_lifecycle_tests.erl \
+            test/lambda_host_lifecycle_socket_tests.erl
+
+      - name: Run focused lifecycle EUnit suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          erl -noshell -pa /tmp/scintilla-lifecycle-proof -eval '
+            ok = case eunit:test(
+                [lambda_host_lifecycle_tests, lambda_host_lifecycle_socket_tests],
+                [verbose]
+            ) of
+                ok -> ok;
+                error -> erlang:error(lifecycle_eunit_failed)
+            end,
+            halt(0).'
