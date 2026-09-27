@@ -1,0 +1,235 @@
+name: BeamScale local desktop exact-head proof
+
+on:
+  pull_request:
+    paths:
+      - 'evidence/beamscale-local-desktop-stack/source-lock.json'
+      - '.github/workflows/beamscale-local-desktop-stack.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beamscale-local-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LOCK_FILE: evidence/beamscale-local-desktop-stack/source-lock.json
+
+jobs:
+  daemon:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact-source read token
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+      - name: Resolve exact daemon SHA
+        id: lock
+        shell: bash
+        run: echo "sha=$(jq -r '.sources[\"beamscale/beamscale-desktop-daemon\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: beamscale/beamscale-desktop-daemon
+          ref: ${{ steps.lock.outputs.sha }}
+          token: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+          path: source
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: test "$(git -C source rev-parse HEAD)" = "${{ steps.lock.outputs.sha }}"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: '1.97.0'
+          components: rustfmt, clippy
+      - name: Run daemon native gates
+        working-directory: source
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets
+      - name: Assert desktop boundary contract
+        working-directory: source
+        shell: bash
+        run: |
+          grep -F '.route("/v1/tunnel/start"' src/main.rs
+          grep -F 'keep_alive_during_lock' src/main.rs
+          grep -F 'Command::new("caffeinate")' src/main.rs || test "${{ matrix.os }}" != macos-latest
+          grep -F 'systemd-inhibit' src/main.rs || test "${{ matrix.os }}" != ubuntu-latest
+          grep -F 'SetThreadExecutionState' src/main.rs || test "${{ matrix.os }}" != windows-latest
+          grep -F 'BMSCL_DAEMON_TOKEN' src/main.rs
+
+  rust-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact-source read token
+        env:
+          TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+      - id: lock
+        run: echo "sha=$(jq -r '.sources[\"beamscale/bmscl-cli\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: beamscale/bmscl-cli
+          ref: ${{ steps.lock.outputs.sha }}
+          token: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+          path: source
+          persist-credentials: false
+      - run: test "$(git -C source rev-parse HEAD)" = "${{ steps.lock.outputs.sha }}"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: erlef/setup-beam@v1.24.1
+        with:
+          otp-version: '29.1.1'
+          version-type: strict
+      - name: Run Rust CLI native gates
+        working-directory: source
+        run: |
+          mkdir -p "$RUNNER_TEMP/bmscl-dev-bridge"
+          erlc -o "$RUNNER_TEMP/bmscl-dev-bridge" support/bmscl_dev_bridge.erl
+          test -f "$RUNNER_TEMP/bmscl-dev-bridge/bmscl_dev_bridge.beam"
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets
+          cargo fmt --all -- --check
+          rustc --edition=2021 -D warnings conformance/formal_model.rs -o /tmp/formal-model
+          /tmp/formal-model
+      - name: Assert local daemon command surface
+        working-directory: source
+        run: |
+          grep -F 'LocalCommands::Status' src/main.rs
+          grep -F 'LocalTunnelCommands::Start' src/main.rs
+          grep -F 'LocalKeepAwakeCommands::On' src/main.rs
+          grep -F 'desktop_daemon::Command::UpdateApply' src/main.rs
+
+  gleam-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact-source read token
+        env:
+          TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+      - id: lock
+        run: echo "sha=$(jq -r '.sources[\"beamscale/bmscl-cli-gleam\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: beamscale/bmscl-cli-gleam
+          ref: ${{ steps.lock.outputs.sha }}
+          token: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+          path: source
+          persist-credentials: false
+      - run: test "$(git -C source rev-parse HEAD)" = "${{ steps.lock.outputs.sha }}"
+      - uses: erlef/setup-beam@v1.24.1
+        with:
+          otp-version: '27'
+          gleam-version: '1.15.0'
+          rebar3-version: '3.24'
+      - name: Run Gleam CLI native gates
+        working-directory: source
+        run: |
+          gleam deps download
+          gleam format --check src
+          gleam check
+          gleam build
+          mkdir -p "$RUNNER_TEMP/bmscl-dev-state-tests"
+          erlc -DTEST -o "$RUNNER_TEMP/bmscl-dev-state-tests" src/bmscl_dev_ffi.erl
+          erlc -o "$RUNNER_TEMP/bmscl-dev-state-tests" test/bmscl_dev_state_tests.erl
+          erl -noshell -pa "$RUNNER_TEMP/bmscl-dev-state-tests" -eval 'case eunit:test(bmscl_dev_state_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
+
+  rust-desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact-source read token
+        env:
+          TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+      - id: lock
+        run: echo "sha=$(jq -r '.sources[\"beamscale/bmscl-desktop-app.rs\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: beamscale/bmscl-desktop-app.rs
+          ref: ${{ steps.lock.outputs.sha }}
+          token: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+          path: source
+          persist-credentials: false
+      - run: test "$(git -C source rev-parse HEAD)" = "${{ steps.lock.outputs.sha }}"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: '1.97.0'
+          components: rustfmt, clippy
+      - name: Run Rust desktop native gates
+        working-directory: source
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets
+      - name: Assert daemon-owned keep-awake UX
+        working-directory: source
+        run: |
+          grep -F 'Keep BeamScale alive during lock-screen' src/main.rs
+          grep -F 'client.set_keep_awake(enabled)' src/main.rs
+          grep -F 'client.tunnel_start' src/main.rs
+
+  flutter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact-source read token
+        env:
+          TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+      - id: lock
+        run: echo "sha=$(jq -r '.sources[\"beamscale/bmscl-flutter\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: beamscale/bmscl-flutter
+          ref: ${{ steps.lock.outputs.sha }}
+          token: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
+          path: source
+          persist-credentials: false
+      - run: test "$(git -C source rev-parse HEAD)" = "${{ steps.lock.outputs.sha }}"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.47.4
+          cache: true
+      - name: Run Flutter native gates
+        working-directory: source
+        run: |
+          flutter pub get
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+      - name: Assert daemon-owned keep-awake UX
+        working-directory: source
+        run: |
+          grep -F 'Keep BeamScale alive during lock-screen' lib/main.dart
+          grep -F 'client.setKeepAwake(value)' lib/main.dart
+          grep -F 'client.tunnelStart(' lib/main.dart
