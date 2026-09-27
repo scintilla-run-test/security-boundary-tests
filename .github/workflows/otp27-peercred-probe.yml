@@ -1,0 +1,54 @@
+name: OTP 27.3 Unix peercred probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/otp27-peercred-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+      - name: Probe connected AF_UNIX peer credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          erl -noshell -eval '
+            Path = "/tmp/otp27-peercred-probe.sock",
+            _ = file:delete(Path),
+            {ok, Listener} = socket:open(local, stream, default),
+            ok = socket:bind(Listener, #{family => local, path => Path}),
+            ok = socket:listen(Listener, 1),
+            Parent = self(),
+            Client = spawn(fun() ->
+                {ok, C} = socket:open(local, stream, default),
+                ok = socket:connect(C, #{family => local, path => Path}),
+                Parent ! {client_connected, self()},
+                receive stop -> ok end,
+                ok = socket:close(C)
+            end),
+            {ok, Accepted} = socket:accept(Listener),
+            receive {client_connected, Client} -> ok after 1000 -> error(client_connect_timeout) end,
+            Supported = socket:is_supported(options, {socket, peercred}),
+            PeerCred = socket:getopt(Accepted, {socket, peercred}),
+            io:format("peercred_supported=~p peercred=~p~n", [Supported, PeerCred]),
+            Client ! stop,
+            ok = socket:close(Accepted),
+            ok = socket:close(Listener),
+            _ = file:delete(Path),
+            case {Supported, PeerCred} of
+                {true, {ok, _}} -> halt(0);
+                _ -> halt(1)
+            end.
+          '
