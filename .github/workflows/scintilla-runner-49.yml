@@ -1,0 +1,121 @@
+name: Scintilla runner PR49 lifecycle proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/scintilla-runner-49.yml'
+      - 'evidence/scintilla-runner-49/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/scintilla-runner-49.yml'
+      - 'evidence/scintilla-runner-49/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact production source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/scintilla-runner-49'
+          for file in lambda_host_lifecycle.erl lambda_host_lifecycle_socket.erl; do
+            expected="$(jq -r --arg file "$file" '.files[$file]' "$root/source-lock.json")"
+            actual="$(git hash-object "$root/src/$file")"
+            test "$actual" = "$expected" || {
+              echo "vendored Scintilla source mismatch for $file: expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+          commit="$(jq -r '.commit_sha' "$root/source-lock.json")"
+          case "$commit" in
+            (*[!0-9a-f]*|'') echo 'invalid Scintilla production commit lock' >&2; exit 1 ;;
+          esac
+          test "${#commit}" -eq 40
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+
+      - name: Compile exact lifecycle sources
+        shell: bash
+        working-directory: evidence/scintilla-runner-49
+        run: |
+          set -euo pipefail
+          erl -noshell -eval 'io:format("OTP ~s~n", [erlang:system_info(otp_release)]), halt(0).'
+          mkdir -p ebin
+          erlc -Werror +debug_info -o ebin src/lambda_host_lifecycle.erl src/lambda_host_lifecycle_socket.erl
+          erlc -Werror +debug_info -o ebin test/scintilla_lifecycle_carrier_tests.erl
+
+      - name: Run lifecycle and peer-auth adversarial tests
+        shell: bash
+        working-directory: evidence/scintilla-runner-49
+        run: |
+          set -euo pipefail
+          erl -noshell -pa ebin -eval '
+            case eunit:test(scintilla_lifecycle_carrier_tests, [verbose]) of
+              ok -> halt(0);
+              _ -> halt(1)
+            end.
+          '
+
+      - name: Prove native Linux SO_PEERCRED shape on production OTP line
+        shell: bash
+        working-directory: evidence/scintilla-runner-49
+        run: |
+          set -euo pipefail
+          erl -noshell -pa ebin -eval '
+            Path = "/tmp/scintilla-peercred-carrier.sock",
+            _ = file:delete(Path),
+            {ok, Listener} = socket:open(local, stream, default),
+            ok = socket:bind(Listener, #{family => local, path => Path}),
+            ok = socket:listen(Listener, 1),
+            Parent = self(),
+            Client = spawn(fun() ->
+                {ok, C} = socket:open(local, stream, default),
+                ok = socket:connect(C, #{family => local, path => Path}),
+                Parent ! {client_connected, self()},
+                receive stop -> ok end,
+                ok = socket:close(C)
+            end),
+            {ok, Accepted} = socket:accept(Listener),
+            receive {client_connected, Client} -> ok after 1000 -> error(client_connect_timeout) end,
+            {ok, Raw} = socket:getopt_native(Accepted, {1, 17}, 12),
+            {ok, #{pid := Pid, uid := Uid, gid := Gid}} =
+                lambda_host_lifecycle_socket:decode_peercred_for_test(Raw),
+            ok = lambda_host_lifecycle_socket:authorize_peercred_for_test(
+                {ok, #{pid => Pid, uid => Uid, gid => Gid}},
+                #{uid => Uid, gid => Gid}),
+            {error, unauthorized_peer} = lambda_host_lifecycle_socket:authorize_peercred_for_test(
+                {ok, #{pid => Pid, uid => Uid, gid => Gid}},
+                #{uid => Uid, gid => Gid + 1}),
+            Client ! stop,
+            ok = socket:close(Accepted),
+            ok = socket:close(Listener),
+            _ = file:delete(Path),
+            halt(0).
+          '
+
+      - name: Reject local Erlang authority serialization
+        shell: bash
+        working-directory: evidence/scintilla-runner-49
+        run: |
+          set -euo pipefail
+          if grep -nE 'term_to_binary|binary_to_term' src/lambda_host_lifecycle_socket.erl; then
+            echo 'lifecycle socket must not serialize local Erlang PIDs/references' >&2
+            exit 1
+          fi
