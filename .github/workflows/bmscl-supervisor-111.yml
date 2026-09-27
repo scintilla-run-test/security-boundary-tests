@@ -47,25 +47,22 @@ jobs:
           esac
           test "${#commit}" -eq 40
 
-      - name: Install Erlang test toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y erlang-base erlang-dev erlang-eunit erlang-tools
-          erl -noshell -eval 'io:format("OTP ~s~n", [erlang:system_info(otp_release)]), halt(0).'
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
 
       - name: Compile exact lifecycle sources and hostile contract manager
         shell: bash
         working-directory: evidence/bmscl-supervisor-111
         run: |
           set -euo pipefail
+          erl -noshell -eval 'io:format("OTP ~s~n", [erlang:system_info(otp_release)]), halt(0).'
           mkdir -p ebin
           erlc -Werror +debug_info -o ebin test_support/bmscl_deployment_manager.erl
           erlc -Werror +debug_info -o ebin src/bmscl_runtime.erl src/bmscl_host_lifecycle_socket.erl
           erlc -Werror +debug_info -o ebin test/bmscl_lifecycle_carrier_tests.erl
 
-      - name: Run owner, stale-runtime, and protocol adversarial tests
+      - name: Run owner, stale-runtime, peer-auth, and protocol adversarial tests
         shell: bash
         working-directory: evidence/bmscl-supervisor-111
         run: |
@@ -75,6 +72,43 @@ jobs:
               ok -> halt(0);
               _ -> halt(1)
             end.
+          '
+
+      - name: Prove native Linux SO_PEERCRED shape on production OTP line
+        shell: bash
+        run: |
+          set -euo pipefail
+          erl -noshell -eval '
+            Path = "/tmp/bmscl-peercred-carrier.sock",
+            _ = file:delete(Path),
+            {ok, Listener} = socket:open(local, stream, default),
+            ok = socket:bind(Listener, #{family => local, path => Path}),
+            ok = socket:listen(Listener, 1),
+            Parent = self(),
+            Client = spawn(fun() ->
+                {ok, C} = socket:open(local, stream, default),
+                ok = socket:connect(C, #{family => local, path => Path}),
+                Parent ! {client_connected, self()},
+                receive stop -> ok end,
+                ok = socket:close(C)
+            end),
+            {ok, Accepted} = socket:accept(Listener),
+            receive {client_connected, Client} -> ok after 1000 -> error(client_connect_timeout) end,
+            {ok, Raw} = socket:getopt_native(Accepted, {1, 17}, 12),
+            {ok, #{pid := Pid, uid := Uid, gid := Gid}} =
+                bmscl_host_lifecycle_socket:decode_peer_credentials_for_test(Raw),
+            true = is_integer(Pid) andalso Pid >= 0,
+            true = is_integer(Uid) andalso Uid >= 0,
+            true = is_integer(Gid) andalso Gid >= 0,
+            ok = bmscl_host_lifecycle_socket:authorize_peer_for_test(
+                #{pid => Pid, uid => Uid, gid => Gid}, #{uid => Uid, gid => Gid}),
+            {error, unauthorized_peer} = bmscl_host_lifecycle_socket:authorize_peer_for_test(
+                #{pid => Pid, uid => Uid, gid => Gid}, #{uid => Uid + 1, gid => Gid}),
+            Client ! stop,
+            ok = socket:close(Accepted),
+            ok = socket:close(Listener),
+            _ = file:delete(Path),
+            halt(0).
           '
 
       - name: Reject accidental wire serialization of local Erlang authority
