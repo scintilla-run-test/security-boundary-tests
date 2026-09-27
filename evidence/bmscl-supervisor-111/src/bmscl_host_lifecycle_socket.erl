@@ -133,6 +133,9 @@ terminate(_Reason, State) ->
         undefined -> ok;
         Listener -> _ = socket:close(Listener)
     end,
+    %% Only delete a path after this process successfully bound it. open_listener/1
+    %% never removes a pre-existing filesystem entry, so this cannot be used as a
+    %% privileged arbitrary-unlink primitive through the environment variable.
     case maps:get(path, State, undefined) of
         undefined -> ok;
         Path -> _ = file:delete(Path)
@@ -192,6 +195,9 @@ open_listener(Path) ->
         false ->
             {error, local_socket_unsupported};
         true ->
+            %% Do not unlink here. A pre-existing path may be a file/symlink/socket
+            %% planted outside this process's authority. Bind must fail closed and
+            %% trusted systemd RuntimeDirectory ownership handles stale cleanup.
             case socket:open(local, stream, default) of
                 {error, Reason} ->
                     {error, {socket_open_failed, Reason}};
@@ -217,6 +223,9 @@ listen_bound_socket(Listener, Path) ->
             _ = file:delete(Path),
             {error, {socket_listen_failed, Reason}};
         ok ->
+            %% Root host agent can connect to a runtime-owned 0600 socket without
+            %% granting access to sibling/tenant UIDs. Kernel peer credentials are
+            %% still mandatory after accept; filesystem mode is defense in depth.
             case file:change_mode(Path, 8#600) of
                 ok -> {ok, Listener};
                 {error, Reason} ->
