@@ -13,6 +13,13 @@
 %% a private systemd RuntimeDirectory. This module never unlinks a pre-existing
 %% path before bind: a stale or attacker-created path fails startup closed and
 %% must be cleaned by the trusted service manager/runtime-directory owner.
+%%
+%% When enabled, BMSCL_LIFECYCLE_AGENT_UID and BMSCL_LIFECYCLE_AGENT_GID are
+%% mandatory. Every accepted Linux AF_UNIX connection is authenticated with the
+%% kernel SO_PEERCRED value before request bytes are parsed. OTP 27.3 does not
+%% expose its named `peercred` option on the production build, so this module
+%% uses `socket:getopt_native/3` with Linux SOL_SOCKET/SO_PEERCRED constants and
+%% exact `struct ucred` decoding. Missing/invalid credentials fail closed.
 -module(bmscl_host_lifecycle_socket).
 -behaviour(gen_server).
 
@@ -20,7 +27,9 @@
     start_link/0,
     enabled/0,
     parse_request_for_test/1,
-    validate_socket_path_for_test/1
+    validate_socket_path_for_test/1,
+    decode_peer_credentials_for_test/1,
+    authorize_peer_for_test/2
 ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -29,13 +38,16 @@
 -define(MAX_QUIESCE_MS, 300000).
 -define(RECV_TIMEOUT_MS, 5000).
 -define(LIFECYCLE_SOCKET_PATH, "/run/beamscale-lifecycle/control.sock").
+-define(LINUX_SOL_SOCKET, 1).
+-define(LINUX_SO_PEERCRED, 17).
+-define(LINUX_UCRED_BYTES, 12).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 enabled() ->
-    case socket_path() of
-        {enabled, _Path} -> true;
+    case socket_configuration() of
+        {enabled, _Path, _TrustedPeer} -> true;
         disabled -> false;
         {error, _Reason} -> false
     end.
@@ -46,18 +58,26 @@ parse_request_for_test(Request) ->
 validate_socket_path_for_test(Value) ->
     validate_socket_path(Value).
 
+decode_peer_credentials_for_test(Value) ->
+    decode_peer_credentials(Value).
+
+authorize_peer_for_test(Credentials, TrustedPeer) ->
+    authorize_peer(Credentials, TrustedPeer).
+
 init([]) ->
-    case socket_path() of
+    case socket_configuration() of
         disabled ->
-            {ok, initial_state(undefined, undefined)};
+            {ok, initial_state(undefined, undefined, undefined)};
         {error, Reason} ->
             {stop, Reason};
-        {enabled, Path} ->
+        {enabled, Path, TrustedPeer} ->
             case open_listener(Path) of
                 {ok, Listener} ->
                     Server = self(),
-                    _Acceptor = spawn_link(fun() -> accept_loop(Listener, Server) end),
-                    {ok, initial_state(Listener, Path)};
+                    _Acceptor = spawn_link(
+                        fun() -> accept_loop(Listener, Server, TrustedPeer) end
+                    ),
+                    {ok, initial_state(Listener, Path, TrustedPeer)};
                 {error, Reason} ->
                     {stop, Reason}
             end
@@ -122,9 +142,10 @@ terminate(_Reason, State) ->
     end,
     ok.
 
-initial_state(Listener, Path) ->
+initial_state(Listener, Path, TrustedPeer) ->
     #{listener => Listener,
       path => Path,
+      trusted_peer => TrustedPeer,
       quiesce_handle => undefined,
       idle_since_ms => undefined}.
 
@@ -203,8 +224,8 @@ listen_bound_socket(Listener, Path) ->
             {error, {socket_listen_failed, Reason}};
         ok ->
             %% Root host agent can connect to a runtime-owned 0600 socket without
-            %% granting access to sibling/tenant UIDs. The parent directory must
-            %% also be private and service-manager owned.
+            %% granting access to sibling/tenant UIDs. Kernel peer credentials are
+            %% still mandatory after accept; filesystem mode is defense in depth.
             case file:change_mode(Path, 8#600) of
                 ok -> {ok, Listener};
                 {error, Reason} ->
@@ -214,28 +235,75 @@ listen_bound_socket(Listener, Path) ->
             end
     end.
 
-accept_loop(Listener, Server) ->
+accept_loop(Listener, Server, TrustedPeer) ->
     case socket:accept(Listener) of
         {ok, Connection} ->
-            _Worker = spawn(fun() -> serve_connection(Connection, Server) end),
-            accept_loop(Listener, Server);
+            _Worker = spawn(
+                fun() -> serve_connection(Connection, Server, TrustedPeer) end
+            ),
+            accept_loop(Listener, Server, TrustedPeer);
         {error, closed} ->
             ok;
         {error, _Reason} ->
             exit(lifecycle_socket_accept_failed)
     end.
 
-serve_connection(Connection, Server) ->
-    Response = case recv_line(Connection, <<>>) of
+serve_connection(Connection, Server, TrustedPeer) ->
+    Response = case authenticate_connection(Connection, TrustedPeer) of
+        ok ->
+            authenticated_response(Connection, Server);
+        {error, _Reason} ->
+            <<"error unauthorized\n">>
+    end,
+    _ = socket:send(Connection, Response),
+    _ = socket:close(Connection),
+    ok.
+
+authenticated_response(Connection, Server) ->
+    case recv_line(Connection, <<>>) of
         {ok, Request} ->
             ProtocolRequest = parse_request(Request),
             gen_server:call(Server, {protocol, ProtocolRequest}, ?MAX_QUIESCE_MS + 10000);
         {error, _Reason} ->
             <<"error invalid_request\n">>
-    end,
-    _ = socket:send(Connection, Response),
-    _ = socket:close(Connection),
-    ok.
+    end.
+
+authenticate_connection(Connection, TrustedPeer) ->
+    case peer_credentials(Connection) of
+        {ok, Credentials} ->
+            authorize_peer(Credentials, TrustedPeer);
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+peer_credentials(Connection) ->
+    case os:type() of
+        {unix, linux} ->
+            case socket:getopt_native(
+                Connection,
+                {?LINUX_SOL_SOCKET, ?LINUX_SO_PEERCRED},
+                ?LINUX_UCRED_BYTES
+            ) of
+                {ok, Value} ->
+                    decode_peer_credentials(Value);
+                {error, Reason} ->
+                    {error, {peer_credentials_unavailable, Reason}}
+            end;
+        _Other ->
+            {error, peer_credentials_unsupported_platform}
+    end.
+
+decode_peer_credentials(
+  <<Pid:32/native-signed, Uid:32/native-unsigned, Gid:32/native-unsigned>>)
+  when Pid >= 0 ->
+    {ok, #{pid => Pid, uid => Uid, gid => Gid}};
+decode_peer_credentials(_Value) ->
+    {error, invalid_peer_credentials}.
+
+authorize_peer(#{uid := Uid, gid := Gid}, #{uid := Uid, gid := Gid}) ->
+    ok;
+authorize_peer(_Credentials, _TrustedPeer) ->
+    {error, unauthorized_peer}.
 
 recv_line(_Connection, Acc) when byte_size(Acc) > ?MAX_REQUEST_BYTES ->
     {error, request_too_large};
@@ -276,6 +344,19 @@ admission_token(quiescing) -> <<"quiescing">>;
 admission_token(sealed) -> <<"sealed">>;
 admission_token(_) -> <<"unavailable">>.
 
+socket_configuration() ->
+    case socket_path() of
+        disabled ->
+            disabled;
+        {error, _Reason} = Error ->
+            Error;
+        {enabled, Path} ->
+            case trusted_peer() of
+                {ok, TrustedPeer} -> {enabled, Path, TrustedPeer};
+                {error, _Reason} = Error -> Error
+            end
+    end.
+
 socket_path() ->
     case os:getenv("BMSCL_LIFECYCLE_SOCKET") of
         false -> disabled;
@@ -287,6 +368,29 @@ validate_socket_path(?LIFECYCLE_SOCKET_PATH = Value) ->
     {enabled, Value};
 validate_socket_path(_Value) ->
     {error, invalid_lifecycle_socket_path}.
+
+trusted_peer() ->
+    case {
+        parse_peer_id(os:getenv("BMSCL_LIFECYCLE_AGENT_UID")),
+        parse_peer_id(os:getenv("BMSCL_LIFECYCLE_AGENT_GID"))
+    } of
+        {{ok, Uid}, {ok, Gid}} ->
+            {ok, #{uid => Uid, gid => Gid}};
+        _ ->
+            {error, invalid_lifecycle_agent_peer}
+    end.
+
+parse_peer_id(false) ->
+    {error, missing};
+parse_peer_id("") ->
+    {error, missing};
+parse_peer_id(Value) when is_list(Value) ->
+    case string:to_integer(Value) of
+        {Id, []} when Id >= 0, Id =< 4294967295 ->
+            {ok, Id};
+        _ ->
+            {error, invalid}
+    end.
 
 trim_ascii(Binary) ->
     unicode:characters_to_binary(string:trim(binary_to_list(Binary))).

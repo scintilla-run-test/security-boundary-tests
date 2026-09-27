@@ -79,6 +79,26 @@ socket_path_is_fixed_test() ->
     ?assertEqual({error, invalid_lifecycle_socket_path},
                  bmscl_host_lifecycle_socket:validate_socket_path_for_test("/tmp/tenant.sock")).
 
+peer_credentials_decode_and_authorize_test() ->
+    Raw = <<1234:32/native-signed, 1000:32/native-unsigned, 1001:32/native-unsigned>>,
+    {ok, Credentials} = bmscl_host_lifecycle_socket:decode_peer_credentials_for_test(Raw),
+    ?assertEqual(#{pid => 1234, uid => 1000, gid => 1001}, Credentials),
+    Trusted = #{uid => 1000, gid => 1001},
+    ?assertEqual(ok, bmscl_host_lifecycle_socket:authorize_peer_for_test(Credentials, Trusted)),
+    ?assertEqual({error, unauthorized_peer},
+                 bmscl_host_lifecycle_socket:authorize_peer_for_test(
+                   Credentials, Trusted#{uid => 1002})),
+    ?assertEqual({error, unauthorized_peer},
+                 bmscl_host_lifecycle_socket:authorize_peer_for_test(
+                   Credentials, Trusted#{gid => 1002})).
+
+peer_credentials_fail_closed_test() ->
+    ?assertEqual({error, invalid_peer_credentials},
+                 bmscl_host_lifecycle_socket:decode_peer_credentials_for_test(<<1,2,3>>)),
+    NegativePid = <<-1:32/native-signed, 1000:32/native-unsigned, 1001:32/native-unsigned>>,
+    ?assertEqual({error, invalid_peer_credentials},
+                 bmscl_host_lifecycle_socket:decode_peer_credentials_for_test(NegativePid)).
+
 with_runtime(Test) ->
     cleanup(),
     {ok, Manager} = bmscl_deployment_manager:start_link(),
