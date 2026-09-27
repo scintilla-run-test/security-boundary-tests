@@ -1,0 +1,78 @@
+name: Lifecycle socket bridge proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lifecycle-socket-bridge-proof.yml'
+      - 'evidence/lifecycle-socket-bridges/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lifecycle-socket-bridge-proof.yml'
+      - 'evidence/lifecycle-socket-bridges/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact production blob identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/lifecycle-socket-bridges'
+          count="$(jq '.sources | length' "$root/source-lock.json")"
+          test "$count" -eq 2
+          for i in 0 1; do
+            path="$(jq -r ".sources[$i].vendored_path" "$root/source-lock.json")"
+            expected="$(jq -r ".sources[$i].git_blob_sha" "$root/source-lock.json")"
+            actual="$(git hash-object "$root/$path")"
+            test "$actual" = "$expected" || {
+              echo "source identity mismatch for $path: expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+
+      - name: Install BeamScale-certified OTP
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+          rebar3-version: '3.24.0'
+
+      - name: Compile exact production bridge modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd evidence/lifecycle-socket-bridges
+          erlc +warnings_as_errors bmscl_host_lifecycle_socket.erl
+          erlc +warnings_as_errors lambda_host_lifecycle_socket.erl
+          erlc +warnings_as_errors socket_bridge_contract_probe.erl
+
+      - name: Verify fixed paths and bounded wire protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd evidence/lifecycle-socket-bridges
+          erl -noshell -pa . -s socket_bridge_contract_probe main
+
+      - name: Prove no pre-bind unlink regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/lifecycle-socket-bridges'
+          for file in bmscl_host_lifecycle_socket.erl lambda_host_lifecycle_socket.erl; do
+            body="$(sed -n '/^open_listener(Path) ->/,/^bind_listener(Listener, Path) ->/p' "$root/$file")"
+            if grep -q 'file:delete' <<<"$body"; then
+              echo "$file: open_listener must never delete a pre-existing path" >&2
+              exit 1
+            fi
+            grep -q '8#600' "$root/$file"
+          done
