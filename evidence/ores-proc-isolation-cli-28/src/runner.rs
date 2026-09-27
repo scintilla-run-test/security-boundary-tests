@@ -133,8 +133,7 @@ fn read_target_environment(reader: impl Read) -> Result<BTreeMap<String, String>
         .map_err(Error::HelperIo)?;
     if bytes.len() as u64 > MAX_TARGET_ENV_STDIN_BYTES {
         return Err(Error::Cli(format!(
-            "target environment stdin exceeds {} bytes",
-            MAX_TARGET_ENV_STDIN_BYTES
+            "target environment stdin exceeds {MAX_TARGET_ENV_STDIN_BYTES} bytes"
         )));
     }
 
@@ -146,8 +145,7 @@ fn read_target_environment(reader: impl Read) -> Result<BTreeMap<String, String>
         })?;
     if environment.len() > MAX_TARGET_ENV_KEYS {
         return Err(Error::Cli(format!(
-            "target environment stdin exceeds {} keys",
-            MAX_TARGET_ENV_KEYS
+            "target environment stdin exceeds {MAX_TARGET_ENV_KEYS} keys"
         )));
     }
     Ok(environment)
