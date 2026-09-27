@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "scintilla-run/scintilla-desktop-daemon",
+  "pull_request": 6,
+  "commit_sha": "707807a7c9cfe39153b70732688d821aeedee3c5",
+  "files": {
+    "Cargo.toml": "43311e26886a9a22ee2ec331ede86f1056bc309c",
+    "src/main.rs": "28e9b80941261f509e36e4f448e0337aee22c44d"
+  }
+}
