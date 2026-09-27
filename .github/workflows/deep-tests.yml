@@ -36,3 +36,8 @@ jobs:
           PYTHONPATH: src
           DEEP_TEST_SEEDS: '0-49'
         run: python -m unittest discover -s tests -v
+
+  beamscale-local-desktop:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/beamscale-local-desktop-stack-v2.yml
+    secrets: inherit
