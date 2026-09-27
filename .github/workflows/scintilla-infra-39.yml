@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y nix-bin
-          nix-instantiate --version
+          sudo nix-instantiate --version
           nixpkgs_sha='5e2305d577ca00acbba631b05cb1094d172b29f3'
           curl --fail --location --silent --show-error \
             "https://github.com/NixOS/nixpkgs/archive/${nixpkgs_sha}.tar.gz" \
@@ -80,19 +80,18 @@ jobs:
         working-directory: evidence/scintilla-infra-39
         run: |
           set -euo pipefail
-          nix-instantiate --parse fleet/nixos/scintilla-runtime.nix >/dev/null
-          nix-instantiate --parse fleet/nixos/scintilla-lifecycle-agent.nix >/dev/null
-          nix-instantiate --parse fleet/colmena-hive.nix >/dev/null
-          nix-instantiate --parse eval.nix >/dev/null
+          sudo nix-instantiate --parse fleet/nixos/scintilla-runtime.nix >/dev/null
+          sudo nix-instantiate --parse fleet/nixos/scintilla-lifecycle-agent.nix >/dev/null
+          sudo nix-instantiate --parse fleet/colmena-hive.nix >/dev/null
+          sudo nix-instantiate --parse eval.nix >/dev/null
 
       - name: Evaluate runtime and lifecycle modules together
         shell: bash
         working-directory: evidence/scintilla-infra-39
-        env:
-          NIX_PATH: nixpkgs=/tmp/nixpkgs
         run: |
           set -euo pipefail
-          nix-instantiate --eval --strict --json eval.nix > evaluated.json
+          sudo env NIX_PATH=nixpkgs=/tmp/nixpkgs \
+            nix-instantiate --eval --strict --json eval.nix > evaluated.json
           jq . evaluated.json
 
           jq -e '.runtimeEnvironment.SCINTILLA_LIFECYCLE_SOCKET == "/run/scintilla-lifecycle/control.sock"' evaluated.json
