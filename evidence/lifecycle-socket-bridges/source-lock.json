@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "repository": "beamscale/bmscl-supervisor",
+      "pull_request": 111,
+      "commit_sha": "92ebf108d8a1d13b6b136d05a236f02ec01467e8",
+      "path": "src/bmscl_host_lifecycle_socket.erl",
+      "vendored_path": "bmscl_host_lifecycle_socket.erl",
+      "git_blob_sha": "fd9ad62bd263c4e23fe0e7ba094228ea4677b7fb"
+    },
+    {
+      "repository": "scintilla-run/gleam-lambda-runner",
+      "pull_request": 49,
+      "commit_sha": "a304a8584265c5bfcb4511d70e733bab6bf294a8",
+      "path": "src/lambda_host_lifecycle_socket.erl",
+      "vendored_path": "lambda_host_lifecycle_socket.erl",
+      "git_blob_sha": "3c270c48a20853738e86c5a0de94ca1d43108433"
+    }
+  ]
+}
