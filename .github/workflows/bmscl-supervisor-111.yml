@@ -77,6 +77,16 @@ jobs:
             end.
           '
 
+      - name: Verify hardened socket boundary source shape
+        shell: bash
+        working-directory: evidence/bmscl-supervisor-111
+        run: |
+          set -euo pipefail
+          grep -F 'socket:getopt_native' src/bmscl_host_lifecycle_socket.erl
+          grep -F 'BMSCL_LIFECYCLE_AGENT_UID' src/bmscl_host_lifecycle_socket.erl
+          grep -F 'BMSCL_LIFECYCLE_AGENT_GID' src/bmscl_host_lifecycle_socket.erl
+          awk '/open_listener\(Path\) ->/{flag=1} /bind_listener\(Listener, Path\) ->/{flag=0} flag' src/bmscl_host_lifecycle_socket.erl | ! grep -F 'file:delete'
+
       - name: Reject accidental wire serialization of local Erlang authority
         shell: bash
         working-directory: evidence/bmscl-supervisor-111
