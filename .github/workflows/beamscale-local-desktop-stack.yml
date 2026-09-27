@@ -33,11 +33,17 @@ jobs:
         shell: bash
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - name: Resolve exact daemon SHA
         id: lock
         shell: bash
-        run: echo "sha=$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/beamscale-desktop-daemon"])')" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/beamscale-desktop-daemon"])')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: beamscale/beamscale-desktop-daemon
@@ -80,9 +86,15 @@ jobs:
       - name: Require exact-source read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
-        run: echo "sha=$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-cli"])')" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-cli"])')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: beamscale/bmscl-cli
@@ -128,9 +140,15 @@ jobs:
       - name: Require exact-source read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
-        run: echo "sha=$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-cli-gleam"])')" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-cli-gleam"])')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: beamscale/bmscl-cli-gleam
@@ -166,9 +184,15 @@ jobs:
       - name: Require exact-source read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
-        run: echo "sha=$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-desktop-app.rs"])')" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-desktop-app.rs"])')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: beamscale/bmscl-desktop-app.rs
@@ -204,9 +228,15 @@ jobs:
       - name: Require exact-source read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
-        run: echo "sha=$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-flutter"])')" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(python -c 'import json,os; print(json.load(open(os.environ["LOCK_FILE"]))["sources"]["beamscale/bmscl-flutter"])')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: beamscale/bmscl-flutter
