@@ -24,6 +24,11 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+%% Every unit of locally admitted work must hold this token until the work has
+%% either completed or durably handed off to a queue whose depth participates in
+%% lifecycle eligibility. A request arriving while quiescing cancels that
+%% suspend attempt atomically and is admitted. Once sealed, new work is rejected
+%% so the host agent can safely freeze/checkpoint the process.
 request_admission() ->
     gen_server:call(?SERVER, request_admission, 5000).
 
@@ -72,6 +77,8 @@ handle_call(request_admission, {Owner, _Tag}, State0) ->
         accepting ->
             grant_admission(Owner, State0);
         quiescing ->
+            %% Demand returned before the host agent committed suspension.
+            %% Reopen first, then admit this request under one serialized call.
             State1 = cancel_quiesce_state(State0),
             grant_admission(Owner, State1);
         sealed ->
@@ -133,6 +140,7 @@ handle_cast(_Message, State) ->
 handle_info({'DOWN', Monitor, process, Owner, _Reason}, State0) ->
     case maps:get(quiesce, State0) of
         #{monitor := Monitor, owner := Owner} ->
+            %% A dead host-control bridge must never strand this runner sealed.
             {noreply, cancel_quiesce_state(State0)};
         _ ->
             case maps:take(Monitor, maps:get(admission_monitors, State0)) of
