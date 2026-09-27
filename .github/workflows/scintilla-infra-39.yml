@@ -1,0 +1,131 @@
+name: Scintilla infra PR39 lifecycle proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/scintilla-infra-39.yml'
+      - 'evidence/scintilla-infra-39/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/scintilla-infra-39.yml'
+      - 'evidence/scintilla-infra-39/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact production source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/scintilla-infra-39'
+          commit="$(jq -r '.commit_sha' "$root/source-lock.json")"
+          test "$commit" = '6f5fda2139de5f1ec454a0567f66a34401fdfc78'
+          for file in \
+            fleet/nixos/scintilla-runtime.nix \
+            fleet/nixos/scintilla-lifecycle-agent.nix \
+            fleet/colmena-hive.nix \
+            tests/fleet-contract.test.mjs; do
+            expected="$(jq -r --arg file "$file" '.files[$file]' "$root/source-lock.json")"
+            actual="$(git hash-object "$root/$file")"
+            test "$actual" = "$expected" || {
+              echo "vendored Scintilla infra mismatch for $file expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+
+      - name: Run exact fleet contract tests
+        shell: bash
+        working-directory: evidence/scintilla-infra-39
+        run: |
+          set -euo pipefail
+          node --test tests/fleet-contract.test.mjs
+
+      - name: Install Nix evaluator and pinned nixpkgs
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nix-bin
+          nix-instantiate --version
+          nixpkgs_sha='5e2305d577ca00acbba631b05cb1094d172b29f3'
+          curl --fail --location --silent --show-error \
+            "https://github.com/NixOS/nixpkgs/archive/${nixpkgs_sha}.tar.gz" \
+            --output /tmp/nixpkgs.tar.gz
+          sudo rm -rf /tmp/nixpkgs
+          sudo mkdir -p /tmp/nixpkgs
+          sudo tar -xzf /tmp/nixpkgs.tar.gz --strip-components=1 -C /tmp/nixpkgs
+          test -f /tmp/nixpkgs/nixos/lib/eval-config.nix
+
+      - name: Parse every changed Nix expression
+        shell: bash
+        working-directory: evidence/scintilla-infra-39
+        run: |
+          set -euo pipefail
+          nix-instantiate --parse fleet/nixos/scintilla-runtime.nix >/dev/null
+          nix-instantiate --parse fleet/nixos/scintilla-lifecycle-agent.nix >/dev/null
+          nix-instantiate --parse fleet/colmena-hive.nix >/dev/null
+          nix-instantiate --parse eval.nix >/dev/null
+
+      - name: Evaluate runtime and lifecycle modules together
+        shell: bash
+        working-directory: evidence/scintilla-infra-39
+        env:
+          NIX_PATH: nixpkgs=/tmp/nixpkgs
+        run: |
+          set -euo pipefail
+          nix-instantiate --eval --strict --json eval.nix > evaluated.json
+          jq . evaluated.json
+
+          jq -e '.runtimeEnvironment.SCINTILLA_LIFECYCLE_SOCKET == "/run/scintilla-lifecycle/control.sock"' evaluated.json
+          jq -e '.runtimeEnvironment.SCINTILLA_LIFECYCLE_AGENT_UID == "0"' evaluated.json
+          jq -e '.runtimeEnvironment.SCINTILLA_LIFECYCLE_AGENT_GID == "0"' evaluated.json
+          jq -e '(.runtimeEnvironment | has("SCINTILLA_LIFECYCLE_PROVIDER") | not)' evaluated.json
+          jq -e '(.runtimeEnvironment | has("SCINTILLA_LIFECYCLE_ENDPOINT") | not)' evaluated.json
+          jq -e '(.runtimeEnvironment | has("SCINTILLA_LIFECYCLE_CHECKPOINT_ROOT") | not)' evaluated.json
+          jq -e '.runtimeExtraGroups | index("scintilla-lifecycle-control") != null' evaluated.json
+          jq -e '.runtimeReadWritePaths | index("/run/scintilla-lifecycle") != null' evaluated.json
+
+          jq -e '.lifecycleUser == "root" and .lifecycleGroup == "root"' evaluated.json
+          jq -e '.lifecycleSupplementaryGroups | index("scintilla-lifecycle-control") != null' evaluated.json
+          jq -e '.lifecycleCapabilities == [] and .lifecycleAmbientCapabilities == []' evaluated.json
+          jq -e '.lifecycleAddressFamilies == ["AF_UNIX"]' evaluated.json
+          jq -e '.lifecycleProtectControlGroups == true' evaluated.json
+          jq -e '.lifecycleEnvironment.ORES_PROCESS_LIFECYCLE_PRODUCT == "scintilla-run"' evaluated.json
+          jq -e '.lifecycleEnvironment.ORES_PROCESS_LIFECYCLE_LEASE_BACKEND == "cloudflare-do"' evaluated.json
+          jq -e '.lifecycleEnvironment.ORES_PROCESS_LIFECYCLE_HIBERNATE_ENABLED == "false"' evaluated.json
+          jq -e '.lifecycleEnvironment.ORES_PROCESS_LIFECYCLE_EFFECTS_ENABLED == "false"' evaluated.json
+          jq -e '.lifecycleReadOnlyPaths | index("/sys/fs/cgroup") != null' evaluated.json
+          jq -e '.lifecycleReadWritePaths == ["/var/lib/scintilla/lifecycle-agent"]' evaluated.json
+          jq -e '.tmpfilesRules | map(select(contains("/run/scintilla-lifecycle 2770 scintilla scintilla-lifecycle-control"))) | length == 1' evaluated.json
+
+      - name: Guard observe-only authority boundary
+        shell: bash
+        working-directory: evidence/scintilla-infra-39
+        run: |
+          set -euo pipefail
+          lifecycle='fleet/nixos/scintilla-lifecycle-agent.nix'
+          runtime='fleet/nixos/scintilla-runtime.nix'
+          ! grep -Eq 'CAP_DAC_OVERRIDE|CAP_SYS_ADMIN|CAP_SYS_PTRACE|criu|CRIU' "$lifecycle"
+          ! grep -Eq 'SCINTILLA_LIFECYCLE_(PROVIDER|ENDPOINT|KEY_PREFIX|CREDENTIAL_NAME|CHECKPOINT_ROOT|LEASE_TTL)' "$runtime"
+          grep -F 'ORES_PROCESS_LIFECYCLE_EFFECTS_ENABLED = "false"' "$lifecycle"
+          grep -F 'ProtectControlGroups = true' "$lifecycle"
+          grep -F 'RestrictAddressFamilies = [ "AF_UNIX" ]' "$lifecycle"
