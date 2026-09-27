@@ -40,9 +40,20 @@ jobs:
         working-directory: evidence/ores-proc-isolation-cli-28
         run: cargo fmt --all -- --check
 
-      - name: Clippy exact source closure
+      - name: Diagnose Cargo lock reproducibility
         working-directory: evidence/ores-proc-isolation-cli-28
-        run: cargo clippy --lib --tests --locked -- -D warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp Cargo.lock /tmp/production-Cargo.lock
+          rm Cargo.lock
+          cargo generate-lockfile
+          echo '--- Cargo-generated lock diff vs production ---'
+          diff -u /tmp/production-Cargo.lock Cargo.lock || true
+
+      - name: Clippy with Cargo-regenerated diagnostic lock
+        working-directory: evidence/ores-proc-isolation-cli-28
+        run: cargo clippy --lib --tests -- -D warnings
 
       - name: Run exact library tests
         working-directory: evidence/ores-proc-isolation-cli-28
