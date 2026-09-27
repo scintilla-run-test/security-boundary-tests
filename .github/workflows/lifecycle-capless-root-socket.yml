@@ -1,0 +1,206 @@
+name: Lifecycle capless-root Unix socket proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lifecycle-capless-root-socket.yml'
+      - 'evidence/lifecycle-capless-root/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lifecycle-capless-root-socket.yml'
+      - 'evidence/lifecycle-capless-root/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact production source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/lifecycle-capless-root'
+          beam_expected="$(jq -r '.beamscale.blob_sha' "$root/source-lock.json")"
+          beam_actual="$(git hash-object "$root/beamscale/bmscl_host_lifecycle_socket.erl")"
+          test "$beam_actual" = "$beam_expected" || {
+            echo "BeamScale source mismatch expected=$beam_expected actual=$beam_actual" >&2
+            exit 1
+          }
+          scintilla_expected="$(jq -r '.scintilla.blob_sha' "$root/source-lock.json")"
+          scintilla_actual="$(git hash-object "$root/scintilla/lambda_host_lifecycle_socket.erl")"
+          test "$scintilla_actual" = "$scintilla_expected" || {
+            echo "Scintilla source mismatch expected=$scintilla_expected actual=$scintilla_actual" >&2
+            exit 1
+          }
+          for product in beamscale scintilla; do
+            commit="$(jq -r --arg product "$product" '.[$product].commit_sha' "$root/source-lock.json")"
+            case "$commit" in
+              (*[!0-9a-f]*|'') echo "invalid $product commit lock" >&2; exit 1 ;;
+            esac
+            test "${#commit}" -eq 40
+          done
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+
+      - name: Compile exact product sockets and trusted-status stubs
+        shell: bash
+        working-directory: evidence/lifecycle-capless-root
+        run: |
+          set -euo pipefail
+          mkdir -p ebin
+          erlc -Werror +debug_info -o ebin \
+            test_support/bmscl_deployment_manager.erl \
+            test_support/bmscl_runtime.erl \
+            test_support/lambda_host_lifecycle.erl
+          erlc -Werror +debug_info -o ebin \
+            beamscale/bmscl_host_lifecycle_socket.erl \
+            scintilla/lambda_host_lifecycle_socket.erl
+
+      - name: Prove root-only native peer policy helpers
+        shell: bash
+        working-directory: evidence/lifecycle-capless-root
+        run: |
+          set -euo pipefail
+          erl -noshell -pa ebin -eval '
+            Root = <<4242:32/native-signed-integer,
+                     0:32/native-unsigned-integer,
+                     0:32/native-unsigned-integer>>,
+            RootWrongGid = <<4243:32/native-signed-integer,
+                             0:32/native-unsigned-integer,
+                             1000:32/native-unsigned-integer>>,
+            NonRoot = <<4244:32/native-signed-integer,
+                        1000:32/native-unsigned-integer,
+                        1000:32/native-unsigned-integer>>,
+            ok = bmscl_host_lifecycle_socket:authorize_peercred_for_test(Root),
+            {error, unauthorized_peer} =
+                bmscl_host_lifecycle_socket:authorize_peercred_for_test(RootWrongGid),
+            {error, unauthorized_peer} =
+                bmscl_host_lifecycle_socket:authorize_peercred_for_test(NonRoot),
+            {error, invalid_peercred} =
+                bmscl_host_lifecycle_socket:authorize_peercred_for_test(
+                  <<0:32/native-signed-integer,
+                    0:32/native-unsigned-integer,
+                    0:32/native-unsigned-integer>>),
+            {ok, ScRoot} = lambda_host_lifecycle_socket:decode_peercred_for_test(Root),
+            ok = lambda_host_lifecycle_socket:authorize_peercred_for_test(
+                ScRoot, #{uid => 0, gid => 0}),
+            {error, unauthorized_peer} =
+                lambda_host_lifecycle_socket:authorize_peercred_for_test(
+                    ScRoot, #{uid => 0, gid => 1000}),
+            {error, invalid_peercred} =
+                lambda_host_lifecycle_socket:decode_peercred_for_test(
+                  <<0:32/native-signed-integer,
+                    0:32/native-unsigned-integer,
+                    0:32/native-unsigned-integer>>),
+            halt(0).
+          '
+
+      - name: Prove same-group unprivileged denial and capless root success
+        shell: bash
+        working-directory: evidence/lifecycle-capless-root
+        run: |
+          set -euo pipefail
+          sudo groupadd -f lifecycle-proof
+          proof_gid="$(getent group lifecycle-proof | cut -d: -f3)"
+          test -n "$proof_gid"
+
+          cleanup() {
+            if [ -n "${beam_vm:-}" ]; then kill "$beam_vm" 2>/dev/null || true; fi
+            if [ -n "${scintilla_vm:-}" ]; then kill "$scintilla_vm" 2>/dev/null || true; fi
+            sudo rm -rf /run/beamscale-lifecycle /run/scintilla-lifecycle
+          }
+          trap cleanup EXIT
+
+          prove_socket() {
+            product="$1"
+            path="$2"
+            directory="$(dirname "$path")"
+            sudo rm -rf "$directory"
+            sudo install -d -m 2770 -o "$(id -un)" -g lifecycle-proof "$directory"
+
+            if [ "$product" = beamscale ]; then
+              BMSCL_LIFECYCLE_SOCKET="$path" \
+                erl -noshell -pa ebin -eval \
+                  '{ok, Pid} = bmscl_host_lifecycle_socket:start_link(), unlink(Pid), receive stop -> ok end.' \
+                  >beam-server.log 2>&1 &
+              beam_vm=$!
+              server_pid="$beam_vm"
+            else
+              SCINTILLA_LIFECYCLE_SOCKET="$path" \
+              SCINTILLA_LIFECYCLE_AGENT_UID=0 \
+              SCINTILLA_LIFECYCLE_AGENT_GID=0 \
+                erl -noshell -pa ebin -eval \
+                  '{ok, Pid} = lambda_host_lifecycle_socket:start_link(), unlink(Pid), receive stop -> ok end.' \
+                  >scintilla-server.log 2>&1 &
+              scintilla_vm=$!
+              server_pid="$scintilla_vm"
+            fi
+
+            for _ in $(seq 1 100); do
+              if [ -S "$path" ]; then break; fi
+              sleep 0.05
+            done
+            test -S "$path" || {
+              cat "${product%-*}-server.log" 2>/dev/null || true
+              echo "$product socket did not appear" >&2
+              exit 1
+            }
+            test "$(stat -c %a "$path")" = 660
+            test "$(stat -c %G "$path")" = lifecycle-proof
+
+            # The runtime owner can reach the inode but must still fail kernel
+            # peer authorization and receive no lifecycle protocol bytes.
+            python3 unprivileged_client.py "$path"
+
+            # Root keeps primary gid 0 for SO_PEERCRED, gains only the private
+            # supplementary control group for Unix DAC, and executes Python after
+            # dropping the complete capability bounding/effective surface.
+            sudo setpriv \
+              --reuid=0 \
+              --regid=0 \
+              --groups="$proof_gid" \
+              --bounding-set=-all \
+              --inh-caps=-all \
+              --ambient-caps=-all \
+              --securebits=+noroot,+noroot_locked \
+              -- python3 capless_root_client.py "$path" "$proof_gid"
+
+            kill "$server_pid"
+            wait "$server_pid" || true
+            if [ "$product" = beamscale ]; then beam_vm=""; else scintilla_vm=""; fi
+            sudo rm -rf "$directory"
+          }
+
+          prove_socket beamscale /run/beamscale-lifecycle/control.sock
+          prove_socket scintilla /run/scintilla-lifecycle/control.sock
+
+      - name: Guard fixed paths and local-authority wire boundary
+        shell: bash
+        working-directory: evidence/lifecycle-capless-root
+        run: |
+          set -euo pipefail
+          grep -F 'file:change_mode(Path, 8#660)' beamscale/bmscl_host_lifecycle_socket.erl
+          grep -F 'file:change_mode(Path, 8#660)' scintilla/lambda_host_lifecycle_socket.erl
+          grep -F '/run/beamscale-lifecycle/control.sock' beamscale/bmscl_host_lifecycle_socket.erl
+          grep -F '/run/scintilla-lifecycle/control.sock' scintilla/lambda_host_lifecycle_socket.erl
+          if grep -nE 'term_to_binary|binary_to_term' \
+            beamscale/bmscl_host_lifecycle_socket.erl \
+            scintilla/lambda_host_lifecycle_socket.erl; then
+            echo 'local Erlang lifecycle authority must never cross the wire' >&2
+            exit 1
+          fi
