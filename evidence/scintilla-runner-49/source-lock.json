@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "scintilla-run/gleam-lambda-runner",
+  "pull_request": 49,
+  "commit_sha": "86a76647e4fafff02333bb9f363dc1ee112301ca",
+  "files": {
+    "lambda_host_lifecycle.erl": "72c18f04841abf0463be1c1efc56f82f2ddcbca5",
+    "lambda_host_lifecycle_socket.erl": "cf88fa8b6880e019c027a3e0ec72bc32a9eef5ca"
+  }
+}
