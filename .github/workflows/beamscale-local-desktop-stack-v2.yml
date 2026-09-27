@@ -33,7 +33,11 @@ jobs:
         shell: bash
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - name: Resolve exact daemon SHA
         id: lock
         shell: bash
@@ -84,7 +88,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - name: Resolve exact daemon SHA
         id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/beamscale-desktop-daemon\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
@@ -287,7 +295,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/bmscl-supervisor\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -324,7 +336,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/bmscl-cli\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -368,7 +384,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/bmscl-cli-gleam\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -410,7 +430,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/bmscl-desktop-app.rs\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -444,7 +468,11 @@ jobs:
       - name: Require fleet read token
         env:
           TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN }}
-        run: test -n "$TOKEN" || { echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2; exit 2; }
+        run: |
+          test -n "$TOKEN" || {
+            echo 'BLOCKED: TEST_FLEET_GITHUB_TOKEN is required' >&2
+            exit 2
+          }
       - id: lock
         run: echo "sha=$(jq -er '.sources[\"beamscale/bmscl-flutter\"]' "$LOCK_FILE")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
