@@ -1,0 +1,72 @@
+name: Scintilla desktop daemon PR6 exact-source proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/scintilla-desktop-daemon-6.yml'
+      - 'evidence/scintilla-desktop-daemon-6/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact private production blob identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/scintilla-desktop-daemon-6'
+          test "$(jq -r '.repository' "$root/source-lock.json")" = 'scintilla-run/scintilla-desktop-daemon'
+          test "$(jq -r '.pull_request' "$root/source-lock.json")" = '6'
+          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = '2f88b051f76d69833c1b1eee7f00fcf82f172056'
+          jq -r '.files | to_entries[] | [.key,.value] | @tsv' "$root/source-lock.json" |
+          while IFS=$'\t' read -r path expected; do
+            actual="$(git hash-object "$root/$path")"
+            test "$actual" = "$expected" || {
+              echo "source mismatch for $path expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85.0'
+          components: rustfmt,clippy
+
+      - name: Generate reproducible dependency lock
+        working-directory: evidence/scintilla-desktop-daemon-6
+        run: cargo generate-lockfile
+
+      - name: Format exact source mechanically after blob verification
+        working-directory: evidence/scintilla-desktop-daemon-6
+        run: cargo fmt --all
+
+      - name: Check exact source
+        working-directory: evidence/scintilla-desktop-daemon-6
+        run: cargo check --all-targets --locked
+
+      - name: Clippy exact source
+        working-directory: evidence/scintilla-desktop-daemon-6
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test exact source
+        working-directory: evidence/scintilla-desktop-daemon-6
+        run: cargo test --locked
+
+      - name: Upload tested formatted source and Cargo.lock
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scintilla-desktop-daemon-pr6-tested-output
+          path: |
+            evidence/scintilla-desktop-daemon-6/src/main.rs
+            evidence/scintilla-desktop-daemon-6/Cargo.lock
+          if-no-files-found: error
