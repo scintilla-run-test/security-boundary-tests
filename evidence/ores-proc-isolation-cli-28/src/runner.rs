@@ -138,8 +138,12 @@ fn read_target_environment(reader: impl Read) -> Result<BTreeMap<String, String>
         )));
     }
 
-    let environment: BTreeMap<String, String> = serde_json::from_slice(&bytes)
-        .map_err(|error| Error::Cli(format!("target environment stdin must be a JSON object of string values: {error}")))?;
+    let environment: BTreeMap<String, String> =
+        serde_json::from_slice(&bytes).map_err(|error| {
+            Error::Cli(format!(
+                "target environment stdin must be a JSON object of string values: {error}"
+            ))
+        })?;
     if environment.len() > MAX_TARGET_ENV_KEYS {
         return Err(Error::Cli(format!(
             "target environment stdin exceeds {} keys",

@@ -53,7 +53,7 @@ pub struct DoctorReport {
 }
 
 /// Fully prepared sandbox launch plan.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct SandboxPlan {
     /// Platform backend.
     pub platform: HostPlatform,
@@ -84,6 +84,27 @@ pub struct SandboxPlan {
     /// Secret-capable environment values passed only to the helper at launch.
     #[serde(skip_serializing)]
     pub environment: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for SandboxPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SandboxPlan")
+            .field("platform", &self.platform)
+            .field("backend", &self.backend)
+            .field("process", &self.process)
+            .field("group", &self.group)
+            .field("executable", &self.executable)
+            .field("working_directory", &self.working_directory)
+            .field("args", &self.args)
+            .field("read_only", &self.read_only)
+            .field("read_write", &self.read_write)
+            .field("network", &self.network)
+            .field("limits", &self.limits)
+            .field("beamscale_honeypot", &self.beamscale_honeypot)
+            .field("environment_keys", &self.environment_keys)
+            .finish()
+    }
 }
 
 /// Detect the supported host platform.
@@ -321,7 +342,6 @@ pub(crate) fn trusted_lookup(name: &str) -> Option<PathBuf> {
     })
 }
 
-
 #[cfg(test)]
 mod serialization_tests {
     use super::*;
@@ -352,5 +372,8 @@ mod serialization_tests {
         assert!(encoded.contains("API_TOKEN"));
         assert!(!encoded.contains("super-secret-value"));
         assert!(!encoded.contains("\"environment\""));
+        let debug = format!("{plan:?}");
+        assert!(debug.contains("API_TOKEN"));
+        assert!(!debug.contains("super-secret-value"));
     }
 }

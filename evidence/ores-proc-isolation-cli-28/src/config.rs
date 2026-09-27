@@ -183,7 +183,7 @@ const fn default_cpu_seconds() -> u64 {
 }
 
 /// Effective process plus its resolved shared policy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ResolvedProcess {
     /// Process key in the YAML file.
     pub name: String,
@@ -199,6 +199,26 @@ pub struct ResolvedProcess {
     pub policy: Group,
     /// Sanitized environment that will be injected into the target.
     pub environment: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for ResolvedProcess {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResolvedProcess")
+            .field("name", &self.name)
+            .field("group", &self.group)
+            .field("executable", &self.executable)
+            .field("working_directory", &self.working_directory)
+            .field("args", &self.args)
+            .field("filesystem", &self.policy.filesystem)
+            .field("network", &self.policy.network)
+            .field("limits", &self.policy.limits)
+            .field(
+                "environment_keys",
+                &self.environment.keys().collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 impl Config {
@@ -639,14 +659,34 @@ processes:
         assert_eq!(resolved.environment["TOKEN"], "secret");
 
         let unauthorized = BTreeMap::from([("UNDECLARED_SECRET".to_owned(), "x".to_owned())]);
-        assert!(config
-            .resolve_process_with_environment("worker", None, &unauthorized)
-            .is_err());
+        assert!(
+            config
+                .resolve_process_with_environment("worker", None, &unauthorized)
+                .is_err()
+        );
 
         let dangerous = BTreeMap::from([("DYLD_INSERT_LIBRARIES".to_owned(), "x".to_owned())]);
-        assert!(config
-            .resolve_process_with_environment("worker", None, &dangerous)
-            .is_err());
+        assert!(
+            config
+                .resolve_process_with_environment("worker", None, &dangerous)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn resolved_process_debug_omits_environment_values() {
+        let mut config = fixture();
+        config
+            .processes
+            .get_mut("worker")
+            .unwrap()
+            .environment
+            .insert("API_TOKEN".into(), "super-secret-value".into());
+
+        let resolved = config.resolve_process("worker", None).expect("resolve");
+        let debug = format!("{resolved:?}");
+        assert!(debug.contains("API_TOKEN"));
+        assert!(!debug.contains("super-secret-value"));
     }
 
     #[test]
