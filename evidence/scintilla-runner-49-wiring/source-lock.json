@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repository": "scintilla-run/gleam-lambda-runner",
+  "pull_request": 49,
+  "commit_sha": "bc83c0c967e4b1ebd112b47629cd801e012a22f9",
+  "files": {
+    "lambda_invocation_observer.erl": "4f8cad776b97aa1958427e0f9089c293227c9051",
+    "lambda_actor_lifecycle.erl": "b243becb0b11a2e4e81e8e83ac388dde4490cfb5",
+    "lambda_actor_alarm.erl": "2abb5020482fb5bead1d09cf13abe9ebca107966",
+    "lambda_runtime_supervisor.erl": "454e15fb8d851f99e6db36fe18e3dedf551db611",
+    "actors.gleam": "5f6b2ff484cbfc1a82fa6492fd866d3c090b3d2a"
+  }
+}
