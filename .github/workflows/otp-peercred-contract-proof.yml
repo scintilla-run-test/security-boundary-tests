@@ -1,0 +1,47 @@
+name: OTP peercred contract proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/otp-peercred-contract-proof.yml'
+      - 'evidence/otp-peercred/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/otp-peercred-contract-proof.yml'
+      - 'evidence/otp-peercred/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  peercred:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install distro Erlang runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends erlang-base erlang-dev
+          erl -noshell -eval 'io:format("OTP=~s~n", [erlang:system_info(otp_release)]), halt().'
+
+      - name: Compile peer credential probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd evidence/otp-peercred
+          erlc +warnings_as_errors peercred_probe.erl
+
+      - name: Run connected Unix-socket peer credential probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd evidence/otp-peercred
+          erl -noshell -pa . -s peercred_probe main
