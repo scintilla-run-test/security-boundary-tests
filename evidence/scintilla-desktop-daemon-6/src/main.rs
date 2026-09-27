@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
     Json, Router,
@@ -26,6 +26,16 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:32123";
 const API_VERSION: &str = "scintilla.desktop-daemon/v1";
+const MAX_API_BODY_BYTES: usize = 256 * 1024;
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_IDENTIFIER_BYTES: usize = 128;
+const MAX_WORKERS: usize = 128;
+const MAX_ARG_COUNT: usize = 128;
+const MAX_ARG_BYTES: usize = 16 * 1024;
+const MAX_ENV_ENTRIES: usize = 256;
+const MAX_ENV_KEY_BYTES: usize = 256;
+const MAX_ENV_VALUE_BYTES: usize = 64 * 1024;
+const MAX_SHUTDOWN_GRACE_MS: u64 = 60_000;
 
 type ApiError = (StatusCode, Json<Value>);
 type ApiResult = std::result::Result<Json<Value>, ApiError>;
@@ -231,6 +241,7 @@ async fn main() -> Result<()> {
         .route("/v1/tunnel/stop", post(tunnel_stop))
         .route("/v1/updates/apply", post(update_apply))
         .route("/v1/preferences", put(preferences_update))
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(address)
@@ -309,6 +320,7 @@ async fn reconcile(State(state): State<AppState>, headers: HeaderMap) -> ApiResu
 
 async fn servers_start(State(state): State<AppState>, headers: HeaderMap) -> ApiResult {
     authorize(&state, &headers)?;
+    validate_identifier("worker name", &request.name).map_err(bad_request)?;
     let mut daemon = lock_state(&state)?;
     reload_manifest_if_configured(&state, &mut daemon)?;
 
@@ -329,6 +341,7 @@ async fn servers_start(State(state): State<AppState>, headers: HeaderMap) -> Api
 
 async fn servers_stop(State(state): State<AppState>, headers: HeaderMap) -> ApiResult {
     authorize(&state, &headers)?;
+    validate_identifier("worker name", &name).map_err(bad_request)?;
     let mut daemon = lock_state(&state)?;
     let grace_ms = daemon.manifest.shutdown_grace_ms;
     stop_workers(&mut daemon.workers, grace_ms).map_err(|error| internal(error))?;
@@ -582,7 +595,21 @@ fn load_manifest(path: Option<&PathBuf>) -> Result<DesktopManifest> {
     let Some(path) = path else {
         return Ok(DesktopManifest::default());
     };
+    let metadata =
+        fs::metadata(path).with_context(|| format!("stat manifest {}", path.display()))?;
+    if metadata.len() > MAX_MANIFEST_BYTES {
+        bail!(
+            "desktop manifest {} exceeds {MAX_MANIFEST_BYTES} bytes",
+            path.display()
+        );
+    }
     let bytes = fs::read(path).with_context(|| format!("read manifest {}", path.display()))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_MANIFEST_BYTES {
+        bail!(
+            "desktop manifest {} exceeds {MAX_MANIFEST_BYTES} bytes",
+            path.display()
+        );
+    }
     return serde_json::from_slice(&bytes)
         .with_context(|| format!("parse desktop manifest {}", path.display()));
 }
@@ -597,35 +624,113 @@ fn validate_manifest(manifest: &DesktopManifest) -> Result<()> {
             manifest.runtime_kind
         );
     }
+    if manifest.shutdown_grace_ms > MAX_SHUTDOWN_GRACE_MS {
+        bail!(
+            "shutdown_grace_ms must not exceed {MAX_SHUTDOWN_GRACE_MS}"
+        );
+    }
+    if manifest.workers.len() > MAX_WORKERS {
+        bail!("desktop manifest declares more than {MAX_WORKERS} workers");
+    }
     if manifest.autostart_ingress && manifest.ingress.is_none() {
         bail!("autostart_ingress requires a configured ingress");
     }
     if let Some(ingress) = manifest.ingress.as_ref() {
         validate_component(ingress)?;
     }
+
+    let mut worker_names = std::collections::BTreeSet::new();
     for worker in &manifest.workers {
-        if worker.name.trim().is_empty() {
-            bail!("worker name must not be empty");
+        validate_identifier("worker name", &worker.name)?;
+        if !worker_names.insert(worker.name.as_str()) {
+            bail!("duplicate worker name {}", worker.name);
         }
         validate_component(&worker.component)?;
     }
+
+    if let Some(tunnel) = manifest.tunnel.as_ref() {
+        validate_identifier("tunnel name", &tunnel.name)?;
+        if tunnel.binary.is_empty()
+            || tunnel.binary.len() > MAX_ARG_BYTES
+            || tunnel.binary.chars().any(|character| character == '\0')
+        {
+            bail!("tunnel binary is invalid");
+        }
+        if let Some(hostname) = tunnel.hostname.as_deref() {
+            if hostname.is_empty()
+                || hostname.len() > 253
+                || hostname.chars().any(|character| {
+                    character.is_control()
+                        || character.is_whitespace()
+                        || matches!(character, '/' | '\\' | '?' | '#')
+                })
+            {
+                bail!("tunnel hostname is invalid");
+            }
+        }
+    }
+
     if let Some(update) = manifest.update.as_ref() {
-        if update.sha256.len() != 64 {
-            bail!("update sha256 must contain 64 hexadecimal characters");
+        if update.sha256.len() != 64
+            || !update
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            bail!("update sha256 must contain exactly 64 hexadecimal characters");
         }
-        if update.hot_update_argv.is_empty() {
-            bail!("update hot_update_argv must not be empty");
-        }
+        validate_argv("update hot_update_argv", &update.hot_update_argv)?;
     }
     return Ok(());
 }
 
 fn validate_component(component: &ComponentSpec) -> Result<()> {
-    if component.name.trim().is_empty() {
-        bail!("component name must not be empty");
+    validate_identifier("component name", &component.name)?;
+    validate_argv("component argv", &component.argv)?;
+    if component.env.len() > MAX_ENV_ENTRIES {
+        bail!("component {} environment exceeds {MAX_ENV_ENTRIES} entries", component.name);
     }
-    if component.argv.is_empty() || component.argv[0].trim().is_empty() {
-        bail!("component {} argv must not be empty", component.name);
+    for (key, value) in &component.env {
+        if key.is_empty()
+            || key.len() > MAX_ENV_KEY_BYTES
+            || key
+                .chars()
+                .any(|character| character.is_control() || character == '=')
+        {
+            bail!("component {} has an invalid environment key", component.name);
+        }
+        if value.len() > MAX_ENV_VALUE_BYTES || value.chars().any(|character| character == '\0') {
+            bail!("component {} has an invalid environment value", component.name);
+        }
+    }
+    return Ok(());
+}
+
+fn validate_argv(name: &str, argv: &[String]) -> Result<()> {
+    if argv.is_empty() || argv.len() > MAX_ARG_COUNT {
+        bail!("{name} must contain 1..={MAX_ARG_COUNT} arguments");
+    }
+    for argument in argv {
+        if argument.is_empty()
+            || argument.len() > MAX_ARG_BYTES
+            || argument.chars().any(|character| character == '\0')
+        {
+            bail!("{name} contains an invalid argument");
+        }
+    }
+    return Ok(());
+}
+
+fn validate_identifier(name: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > MAX_IDENTIFIER_BYTES
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '/' | '\\' | '?' | '#')
+        })
+    {
+        bail!("{name} must contain 1..={MAX_IDENTIFIER_BYTES} safe non-whitespace bytes");
     }
     return Ok(());
 }
@@ -964,8 +1069,13 @@ fn load_or_create_token(root: &PathBuf) -> Result<String> {
 }
 
 fn validate_token(token: &str) -> Result<()> {
-    if token.len() < 32 || token.len() > 4_096 || token.chars().any(char::is_whitespace) {
-        bail!("daemon token must contain 32..=4096 non-whitespace characters");
+    if token.len() < 32
+        || token.len() > 4_096
+        || token
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        bail!("daemon token must contain 32..=4096 non-control, non-whitespace characters");
     }
     return Ok(());
 }
