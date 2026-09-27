@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::flags::{Cli, CliCommand};
 use crate::platform::{self, SandboxPlan};
 

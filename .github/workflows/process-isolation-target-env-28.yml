@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           root='evidence/ores-proc-isolation-cli-28'
-          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = 'e48aeb449e033ca91642436a48acdb8dc187c528'
+          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = '2afb34607b801d77bc0883d07d5c9b4ab7fd5d3a'
           jq -r '.files | to_entries[] | [.key,.value] | @tsv' "$root/source-lock.json" |
           while IFS=$'\t' read -r path expected; do
             actual="$(git hash-object "$root/$path")"
@@ -40,20 +40,9 @@ jobs:
         working-directory: evidence/ores-proc-isolation-cli-28
         run: cargo fmt --all -- --check
 
-      - name: Diagnose Cargo lock reproducibility
+      - name: Clippy exact source closure
         working-directory: evidence/ores-proc-isolation-cli-28
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp Cargo.lock /tmp/production-Cargo.lock
-          rm Cargo.lock
-          cargo generate-lockfile
-          echo '--- Cargo-generated lock diff vs production ---'
-          diff -u /tmp/production-Cargo.lock Cargo.lock || true
-
-      - name: Clippy with Cargo-regenerated diagnostic lock
-        working-directory: evidence/ores-proc-isolation-cli-28
-        run: cargo clippy --lib --tests -- -D warnings
+        run: cargo clippy --lib --tests --locked -- -D warnings
 
       - name: Run exact library tests
         working-directory: evidence/ores-proc-isolation-cli-28
