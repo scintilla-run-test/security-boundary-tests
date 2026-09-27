@@ -2,7 +2,7 @@
   "schema_version": 2,
   "purpose": "Exact production heads for BeamScale local desktop hosting certification",
   "sources": {
-    "beamscale/beamscale-desktop-daemon": "01eb5a91c7beca1dd7441c609c1f8970e0ad66e2",
+    "beamscale/beamscale-desktop-daemon": "b918d749009c26fdb5a5094446cbbc9ac72558bc",
     "beamscale/bmscl-supervisor": "bd92f030e844d4f8a723885b5250da65a7043a2a",
     "beamscale/bmscl-cli": "887d109f2e2b875572eb272ff92efa6297b8b28a",
     "beamscale/bmscl-cli-gleam": "cf440dcf0a58262398811e0a12bfabfe02e7fd89",
