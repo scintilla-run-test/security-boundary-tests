@@ -1,8 +1,9 @@
 {
   "schema_version": 1,
   "repository": "ORESoftware/ores-proc-isolation-cli",
-  "pull_request": 28,
-  "commit_sha": "d733ecb4d24e322f6dc4100aea4e904b776993c1",
+  "pull_request": 31,
+  "commit_sha": "0c079871f01543849f2255bcf4432dc92cb55690",
+  "evidence_path_note": "Legacy -28 directory retained to preserve the prior exact-source carrier closure; lock metadata is authoritative.",
   "files": {
     "Cargo.toml": "0b56f825a0fa03f2e05978b322bafc3b8b6949a4",
     "Cargo.lock": "ebb324b163166141b3d3f38cf713fdbfa421ab02",
@@ -10,7 +11,7 @@
     "README.md": "386f0920e95ea4c9946850490617d34259c19936",
     "src/lib.rs": "1eb67d061362d08a2e57c3784025d3633b19f9e9",
     "src/main.rs": "87738a4f0d494dcca175d3248d6c3283cc797f81",
-    "src/config.rs": "1f8997e07305994d45ae2def0417baeda22ed05a",
+    "src/config.rs": "a6e0c9d895a6efd93ccd8a3b1fded576c8427a0c",
     "src/error.rs": "1686b8f363e3ae3215918259f7c57b0d32e8e98d",
     "src/flags.rs": "447e6c5f56e6e28d09534e5f6a9dac2bf8aa4f1d",
     "src/runner.rs": "98c4085b92e7b1af412656916bf0090c8fbabeb3",
