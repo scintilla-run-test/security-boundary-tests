@@ -84,7 +84,12 @@ in
 
     systemd.tmpfiles.rules = [
       "d ${stateRoot} 0700 root root -"
+      # Current shared-agent v1 preflight requires a checkpoint directory even
+      # with hibernation disabled. Keep it read-only and outside any future real
+      # checkpoint authority rather than granting CRIU/restore rights today.
       "d ${compatibilityCheckpointRoot} 0500 root root -"
+      # The paired bmscl-supervisor socket is 0660. setgid makes it inherit the
+      # private control group while the supervisor user can create it as owner.
       "d ${socketDirectory} 2770 ${cfg.controlSocketOwner} ${controlGroup} -"
     ];
 
@@ -94,6 +99,9 @@ in
       requires = [ "beamscale-workloads.slice" ];
       after = [ "beamscale-workloads.slice" ];
 
+      # Match the executable contract that actually ships today. Shared-agent
+      # issue #38 tracks the trusted lease, demand/dispatch, workload identity,
+      # and transitional recovery adapters required before effects may be enabled.
       environment = cfg.environment // {
         ORES_PROCESS_LIFECYCLE_PRODUCT = "beamscale";
         ORES_PROCESS_LIFECYCLE_CLUSTER = cfg.cluster;
@@ -118,6 +126,8 @@ in
         RestartSec = "2s";
         UMask = "0077";
 
+        # Observe/preflight-only means no cgroup write, lease network, DAC-bypass,
+        # checkpoint, ptrace, mount, or namespace authority is needed yet.
         NoNewPrivileges = true;
         CapabilityBoundingSet = [ ];
         AmbientCapabilities = [ ];
