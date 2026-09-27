@@ -118,11 +118,13 @@ jobs:
           sudo groupadd -f lifecycle-proof
           proof_gid="$(getent group lifecycle-proof | cut -d: -f3)"
           test -n "$proof_gid"
+          sudo install -m 0755 capless_root_client.py /tmp/capless_root_client.py
 
           cleanup() {
             if [ -n "${beam_vm:-}" ]; then kill "$beam_vm" 2>/dev/null || true; fi
             if [ -n "${scintilla_vm:-}" ]; then kill "$scintilla_vm" 2>/dev/null || true; fi
             sudo rm -rf /run/beamscale-lifecycle /run/scintilla-lifecycle
+            sudo rm -f /tmp/capless_root_client.py
           }
           trap cleanup EXIT
 
@@ -178,7 +180,7 @@ jobs:
               --inh-caps=-all \
               --ambient-caps=-all \
               --securebits=+noroot,+noroot_locked \
-              -- python3 capless_root_client.py "$path" "$proof_gid"
+              -- python3 /tmp/capless_root_client.py "$path" "$proof_gid"
 
             kill "$server_pid"
             wait "$server_pid" || true
