@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "beamscale/beamscale-desktop-daemon": "2e975d4fcea8a97c74e83078bf4e1f027ac43eef",
+    "beamscale/bmscl-cli": "868a60598591dffc9b72fa48ed634e0d04f6d7bf",
+    "beamscale/bmscl-cli-gleam": "cf440dcf0a58262398811e0a12bfabfe02e7fd89",
+    "beamscale/bmscl-desktop-app.rs": "778cb7e04ccb6c31f4e6048cb83e6d10f6707fe5",
+    "beamscale/bmscl-flutter": "3db194cd5113c0378181567f5c97aec795fc0d7c"
+  }
+}
