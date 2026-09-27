@@ -24,13 +24,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install distro Erlang runtime
+      - name: Install BeamScale-certified Erlang runtime
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+          rebar3-version: '3.24.0'
+
+      - name: Verify OTP release
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends erlang-base erlang-dev
-          erl -noshell -eval 'io:format("OTP=~s~n", [erlang:system_info(otp_release)]), halt().'
+          erl -noshell -eval '"'"'"27" = erlang:system_info(otp_release), io:format("OTP=~s~n", [erlang:system_info(otp_release)]), halt(0).'"'"'
 
       - name: Compile peer credential probe
         shell: bash
