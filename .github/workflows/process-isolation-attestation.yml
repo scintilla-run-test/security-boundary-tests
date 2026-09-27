@@ -28,17 +28,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify exact production blob identity
+      - name: Verify exact production blob identities
         shell: bash
         run: |
           set -euo pipefail
           root='evidence/ores-proc-isolation-cli-25'
-          expected="$(jq -r '.git_blob_sha' "$root/source-lock.json")"
-          actual="$(git hash-object "$root/linux_attestation.rs")"
-          test "$actual" = "$expected" || {
-            echo "vendored attestation source does not match locked production blob: expected=$expected actual=$actual" >&2
-            exit 1
-          }
+          for file in linux_attestation.rs linux_runtime_binding.rs; do
+            expected="$(jq -r --arg file "$file" '.files[$file]' "$root/source-lock.json")"
+            actual="$(git hash-object "$root/$file")"
+            test "$actual" = "$expected" || {
+              echo "vendored production source does not match locked blob for $file: expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
           commit="$(jq -r '.commit_sha' "$root/source-lock.json")"
           case "$commit" in
             (*[!0-9a-f]*|'') echo 'invalid production commit lock' >&2; exit 1 ;;
