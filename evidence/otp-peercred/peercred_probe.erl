@@ -1,5 +1,9 @@
-%% Proves the concrete Erlang/OTP representation of SO_PEERCRED for a connected
-%% local-domain stream socket on the Linux runner used by lifecycle consumers.
+%% Proves a compatibility fact the lifecycle socket threat model depends on:
+%% BeamScale's certified OTP 27.3 Linux runtime does not expose SO_PEERCRED through
+%% socket:getopt(Connection, {socket, peercred}). Production lifecycle bridges
+%% therefore cannot treat Erlang-level peer credentials as their mandatory access
+%% control boundary. They must use a private service-manager-owned directory,
+%% a fixed socket path, restrictive mode bits, and fail-closed bind semantics.
 -module(peercred_probe).
 -export([main/0]).
 
@@ -34,11 +38,7 @@ client(Path, Parent) ->
         exit(client_timeout)
     end.
 
-validate_peercred_result({ok, Value}) when is_map(Value) ->
-    ok;
-validate_peercred_result({ok, Value}) when is_tuple(Value) ->
-    ok;
-validate_peercred_result({ok, Value}) when is_binary(Value) ->
+validate_peercred_result({error, {invalid, {socket_option, {socket, peercred}}}}) ->
     ok;
 validate_peercred_result(Other) ->
-    erlang:error({unsupported_peercred_result, Other}).
+    erlang:error({peercred_contract_changed, Other}).
