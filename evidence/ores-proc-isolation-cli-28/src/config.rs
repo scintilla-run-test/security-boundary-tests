@@ -69,7 +69,8 @@ pub struct Group {
     #[serde(default)]
     pub limits: ResourceLimits,
     /// Explicit environment variables injected after host environment clearing.
-    #[serde(default)]
+    /// Values are runtime-only and must not enter serialized reports.
+    #[serde(default, skip_serializing)]
     pub environment: BTreeMap<String, String>,
 }
 
@@ -198,6 +199,8 @@ pub struct ResolvedProcess {
     /// Effective policy group.
     pub policy: Group,
     /// Sanitized environment that will be injected into the target.
+    /// Secret-capable values are runtime-only and must not enter serialized reports.
+    #[serde(skip_serializing)]
     pub environment: BTreeMap<String, String>,
 }
 
@@ -273,12 +276,11 @@ impl Config {
                     ));
                 }
                 if let Some(previous) = declared_by_group.insert(member.clone(), group_name.clone())
+                    && previous != *group_name
                 {
-                    if previous != *group_name {
-                        return Err(format!(
-                            "process {member:?} belongs to multiple groups: {previous:?} and {group_name:?}"
-                        ));
-                    }
+                    return Err(format!(
+                        "process {member:?} belongs to multiple groups: {previous:?} and {group_name:?}"
+                    ));
                 }
             }
         }
@@ -318,12 +320,12 @@ impl Config {
                         "process {process_name:?} references unknown group {explicit_group:?}"
                     ));
                 }
-                if let Some(member_group) = declared_by_group.get(process_name) {
-                    if member_group != explicit_group {
-                        return Err(format!(
-                            "process {process_name:?} says group {explicit_group:?} but group membership says {member_group:?}"
-                        ));
-                    }
+                if let Some(member_group) = declared_by_group.get(process_name)
+                    && member_group != explicit_group
+                {
+                    return Err(format!(
+                        "process {process_name:?} says group {explicit_group:?} but group membership says {member_group:?}"
+                    ));
                 }
             }
         }
@@ -687,6 +689,30 @@ processes:
         let debug = format!("{resolved:?}");
         assert!(debug.contains("API_TOKEN"));
         assert!(!debug.contains("super-secret-value"));
+    }
+
+    #[test]
+    fn resolved_process_serialization_omits_environment_values() {
+        let mut config = fixture();
+        config
+            .groups
+            .values_mut()
+            .next()
+            .expect("fixture group")
+            .environment
+            .insert("GROUP_TOKEN".into(), "group-super-secret-value".into());
+        config
+            .processes
+            .get_mut("worker")
+            .unwrap()
+            .environment
+            .insert("API_TOKEN".into(), "process-super-secret-value".into());
+
+        let resolved = config.resolve_process("worker", None).expect("resolve");
+        let encoded = serde_json::to_string(&resolved).expect("serialize resolved process");
+        assert!(!encoded.contains("group-super-secret-value"));
+        assert!(!encoded.contains("process-super-secret-value"));
+        assert!(!encoded.contains("\"environment\""));
     }
 
     #[test]
