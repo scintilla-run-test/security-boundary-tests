@@ -96,7 +96,7 @@ jobs:
                   <<0:32/native-signed-integer,
                     0:32/native-unsigned-integer,
                     0:32/native-unsigned-integer>>),
-            {ok, ScRoot} = lambda_host_lifecycle_socket:decode_peercred_for_test(Root),
+            ScRoot = lambda_host_lifecycle_socket:decode_peercred_for_test(Root),
             ok = lambda_host_lifecycle_socket:authorize_peercred_for_test(
                 ScRoot, #{uid => 0, gid => 0}),
             {error, unauthorized_peer} =
