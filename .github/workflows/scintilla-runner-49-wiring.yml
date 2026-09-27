@@ -1,0 +1,117 @@
+name: Scintilla runner PR49 lifecycle wiring proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/scintilla-runner-49-wiring.yml'
+      - 'evidence/scintilla-runner-49-wiring/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/scintilla-runner-49-wiring.yml'
+      - 'evidence/scintilla-runner-49-wiring/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact current production wiring blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/scintilla-runner-49-wiring'
+          for file in lambda_invocation_observer.erl lambda_actor_lifecycle.erl lambda_actor_alarm.erl lambda_runtime_supervisor.erl actors.gleam; do
+            expected="$(jq -r --arg file "$file" '.files[$file]' "$root/source-lock.json")"
+            actual="$(git hash-object "$root/src/$file")"
+            test "$actual" = "$expected" || {
+              echo "vendored Scintilla wiring mismatch for $file: expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+          commit="$(jq -r '.commit_sha' "$root/source-lock.json")"
+          case "$commit" in
+            (*[!0-9a-f]*|'') echo 'invalid Scintilla production commit lock' >&2; exit 1 ;;
+          esac
+          test "${#commit}" -eq 40
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27.3'
+
+      - name: Compile exact Erlang lifecycle wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/scintilla-runner-49-wiring'
+          mkdir -p "$root/ebin"
+          erlc -Werror +debug_info -o "$root/ebin" \
+            evidence/scintilla-runner-49/src/lambda_host_lifecycle.erl \
+            "$root/test_support/lambda_invocation_telemetry.erl" \
+            "$root/test_support/lambda_actor_manager.erl" \
+            "$root/src/lambda_invocation_observer.erl" \
+            "$root/src/lambda_actor_lifecycle.erl" \
+            "$root/src/lambda_actor_alarm.erl" \
+            "$root/src/lambda_runtime_supervisor.erl" \
+            "$root/test/scintilla_lifecycle_wiring_tests.erl"
+
+      - name: Execute invocation and durable-actor admission wiring
+        shell: bash
+        working-directory: evidence/scintilla-runner-49-wiring
+        run: |
+          set -euo pipefail
+          erl -noshell -pa ebin -eval '
+            case eunit:test(scintilla_lifecycle_wiring_tests, [verbose]) of
+              ok -> halt(0);
+              _ -> halt(1)
+            end.
+          '
+
+      - name: Verify alarm and Gleam actor routes cannot bypass lifecycle wrapper
+        shell: bash
+        working-directory: evidence/scintilla-runner-49-wiring
+        run: |
+          set -euo pipefail
+          grep -F 'lambda_actor_lifecycle:invoke_alarm' src/lambda_actor_alarm.erl
+          if grep -F 'lambda_actor_manager:invoke_alarm' src/lambda_actor_alarm.erl; then
+            echo 'actor alarm bypasses lifecycle wrapper' >&2
+            exit 1
+          fi
+          grep -F '@external(erlang, "lambda_actor_lifecycle", "invoke")' src/actors.gleam
+          grep -F '@external(erlang, "lambda_actor_lifecycle", "reset")' src/actors.gleam
+          if grep -F '@external(erlang, "lambda_actor_manager", "invoke")' src/actors.gleam; then
+            echo 'Gleam actor invoke bypasses lifecycle wrapper' >&2
+            exit 1
+          fi
+
+      - name: Verify every public invocation shape enters lifecycle admission
+        shell: bash
+        working-directory: evidence/scintilla-runner-49-wiring
+        run: |
+          set -euo pipefail
+          count="$(grep -c 'with_lifecycle_admission(fun()' src/lambda_invocation_observer.erl)"
+          test "$count" -eq 5 || {
+            echo "expected five invocation entry points behind lifecycle admission, found $count" >&2
+            exit 1
+          }
+
+      - name: Reject local lifecycle authority serialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -nE 'term_to_binary|binary_to_term' evidence/scintilla-runner-49-wiring/src; then
+            echo 'lifecycle wiring must not serialize local Erlang PIDs/references' >&2
+            exit 1
+          fi
