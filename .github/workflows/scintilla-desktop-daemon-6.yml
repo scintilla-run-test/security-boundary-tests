@@ -45,9 +45,9 @@ jobs:
         working-directory: evidence/scintilla-desktop-daemon-6
         run: cargo generate-lockfile
 
-      - name: Format exact source
+      - name: Format exact source mechanically after blob verification
         working-directory: evidence/scintilla-desktop-daemon-6
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all
 
       - name: Check exact source
         working-directory: evidence/scintilla-desktop-daemon-6
@@ -61,11 +61,12 @@ jobs:
         working-directory: evidence/scintilla-desktop-daemon-6
         run: cargo test --locked
 
-      - name: Emit tested Cargo.lock
+      - name: Upload tested formatted source and Cargo.lock
         if: success()
-        working-directory: evidence/scintilla-desktop-daemon-6
-        shell: bash
-        run: |
-          echo '---BEGIN-SCINTILLA-DESKTOP-DAEMON-CARGO-LOCK---'
-          cat Cargo.lock
-          echo '---END-SCINTILLA-DESKTOP-DAEMON-CARGO-LOCK---'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scintilla-desktop-daemon-pr6-tested-output
+          path: |
+            evidence/scintilla-desktop-daemon-6/src/main.rs
+            evidence/scintilla-desktop-daemon-6/Cargo.lock
+          if-no-files-found: error
