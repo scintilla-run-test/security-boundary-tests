@@ -1,6 +1,7 @@
 name: BeamScale local desktop exact-head proof v2
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'evidence/beamscale-local-desktop-stack-v2/source-lock.json'
