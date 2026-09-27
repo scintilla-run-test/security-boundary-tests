@@ -40,15 +40,22 @@ jobs:
             end),
             {ok, Accepted} = socket:accept(Listener),
             receive {client_connected, Client} -> ok after 1000 -> error(client_connect_timeout) end,
-            Supported = socket:is_supported(options, {socket, peercred}),
-            PeerCred = socket:getopt(Accepted, {socket, peercred}),
-            io:format("peercred_supported=~p peercred=~p~n", [Supported, PeerCred]),
+            NamedSupported = socket:is_supported(options, {socket, peercred}),
+            NamedPeerCred = socket:getopt(Accepted, {socket, peercred}),
+            NativePeerCred = socket:getopt_native(Accepted, {1, 17}, 12),
+            io:format("named_peercred_supported=~p named_peercred=~p native_peercred=~p~n",
+                      [NamedSupported, NamedPeerCred, NativePeerCred]),
             Client ! stop,
             ok = socket:close(Accepted),
             ok = socket:close(Listener),
             _ = file:delete(Path),
-            case {Supported, PeerCred} of
-                {true, {ok, _}} -> halt(0);
-                _ -> halt(1)
+            case NativePeerCred of
+                {ok, <<Pid:32/native-signed, Uid:32/native-unsigned, Gid:32/native-unsigned>>}
+                  when Pid > 0, Uid >= 0, Gid >= 0 ->
+                    io:format("decoded_peercred pid=~B uid=~B gid=~B~n", [Pid, Uid, Gid]),
+                    halt(0);
+                Other ->
+                    io:format("unexpected_native_peercred=~p~n", [Other]),
+                    halt(1)
             end.
           '
