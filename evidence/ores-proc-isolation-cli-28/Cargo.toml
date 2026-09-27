@@ -24,7 +24,7 @@ ores-reactive-maps = { path = "vendor/ores-reactive-maps", package = "ores-react
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-thiserror = "2"
+thiserror = "=2.0.21"
 tempfile = "3"
 
 [dev-dependencies]

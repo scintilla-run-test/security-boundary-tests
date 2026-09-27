@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           root='evidence/ores-proc-isolation-cli-28'
-          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = '3cc0763d606b7953a400dea749d32dc0a4af2788'
+          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = 'e48aeb449e033ca91642436a48acdb8dc187c528'
           jq -r '.files | to_entries[] | [.key,.value] | @tsv' "$root/source-lock.json" |
           while IFS=$'\t' read -r path expected; do
             actual="$(git hash-object "$root/$path")"
