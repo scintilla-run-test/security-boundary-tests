@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "repository": "scintilla-run/scintilla-infra",
+  "pull_request": 39,
+  "commit_sha": "6f5fda2139de5f1ec454a0567f66a34401fdfc78",
+  "files": {
+    "fleet/nixos/scintilla-runtime.nix": "8852c2050104c78fb3c957daaf646fee30298983",
+    "fleet/nixos/scintilla-lifecycle-agent.nix": "1738fe4d14cba09a89da2007ed8ba18461418268",
+    "fleet/colmena-hive.nix": "94bd00ac7f4097548170ee428bec81ae7711c09e",
+    "tests/fleet-contract.test.mjs": "7d271928005008e788d474456f821962fd5d4207"
+  }
+}
