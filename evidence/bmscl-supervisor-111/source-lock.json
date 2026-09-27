@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "beamscale/bmscl-supervisor",
+  "pull_request": 111,
+  "commit_sha": "92ebf108d8a1d13b6b136d05a236f02ec01467e8",
+  "files": {
+    "bmscl_runtime.erl": "51739dd12b3d73d64e471413f8845a76a8326f7f",
+    "bmscl_host_lifecycle_socket.erl": "fd9ad62bd263c4e23fe0e7ba094228ea4677b7fb"
+  }
+}
