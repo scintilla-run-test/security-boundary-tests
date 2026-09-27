@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "ORESoftware/ores-proc-isolation-cli",
   "pull_request": 28,
-  "commit_sha": "2afb34607b801d77bc0883d07d5c9b4ab7fd5d3a",
+  "commit_sha": "d733ecb4d24e322f6dc4100aea4e904b776993c1",
   "files": {
     "Cargo.toml": "0b56f825a0fa03f2e05978b322bafc3b8b6949a4",
     "Cargo.lock": "ebb324b163166141b3d3f38cf713fdbfa421ab02",
@@ -13,7 +13,7 @@
     "src/config.rs": "1f8997e07305994d45ae2def0417baeda22ed05a",
     "src/error.rs": "1686b8f363e3ae3215918259f7c57b0d32e8e98d",
     "src/flags.rs": "447e6c5f56e6e28d09534e5f6a9dac2bf8aa4f1d",
-    "src/runner.rs": "2c167b436a5715e9b35164fbff7c7d3228195428",
+    "src/runner.rs": "98c4085b92e7b1af412656916bf0090c8fbabeb3",
     "src/linux_attestation.rs": "3e2472fad17555d80bf5a5b0d627b1d755d7989a",
     "src/linux_runtime_binding.rs": "d533e59bcf7515d1f3d78f5b30a1b05bae500eb2",
     "src/platform/mod.rs": "c5539db0fd1bf768675b7fa423158a527081324e",
