@@ -26,7 +26,7 @@ jobs:
           root='evidence/scintilla-desktop-daemon-6'
           test "$(jq -r '.repository' "$root/source-lock.json")" = 'scintilla-run/scintilla-desktop-daemon'
           test "$(jq -r '.pull_request' "$root/source-lock.json")" = '6'
-          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = '707807a7c9cfe39153b70732688d821aeedee3c5'
+          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = '6b8b2bfe656c0da73853db23249504017bf5b32d'
           jq -r '.files | to_entries[] | [.key,.value] | @tsv' "$root/source-lock.json" |
           while IFS=$'\t' read -r path expected; do
             actual="$(git hash-object "$root/$path")"
@@ -38,7 +38,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.80.0'
+          toolchain: '1.85.0'
           components: rustfmt,clippy
 
       - name: Generate reproducible dependency lock
