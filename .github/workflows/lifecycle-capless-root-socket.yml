@@ -91,7 +91,7 @@ jobs:
                 bmscl_host_lifecycle_socket:authorize_peercred_for_test(RootWrongGid),
             {error, unauthorized_peer} =
                 bmscl_host_lifecycle_socket:authorize_peercred_for_test(NonRoot),
-            {error, invalid_peercred} =
+            {error, unauthorized_peer} =
                 bmscl_host_lifecycle_socket:authorize_peercred_for_test(
                   <<0:32/native-signed-integer,
                     0:32/native-unsigned-integer,
@@ -156,7 +156,7 @@ jobs:
               sleep 0.05
             done
             test -S "$path" || {
-              cat "${product%-*}-server.log" 2>/dev/null || true
+              if [ "$product" = beamscale ]; then cat beam-server.log || true; else cat scintilla-server.log || true; fi
               echo "$product socket did not appear" >&2
               exit 1
             }
