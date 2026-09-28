@@ -1,0 +1,123 @@
+name: BeamScale infra PR77 hostile lifecycle proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bmscl-infra-77.yml'
+      - 'evidence/bmscl-infra-77/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact production source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/bmscl-infra-77'
+          for file in \
+            modules/tenant_runtime/security/hostile-process-contract.v1.json \
+            deploy/baremetal/.ores-proc-isolation.yaml \
+            deploy/baremetal/process-lifecycle.md \
+            scripts/check-lifecycle-agent-contract.mjs \
+            modules/tenant_runtime/security/README.md; do
+            expected="$(jq -r --arg file "$file" '.files[$file]' "$root/source-lock.json")"
+            actual="$(git hash-object "$root/$file")"
+            test "$actual" = "$expected" || {
+              echo "vendored BeamScale PR77 source mismatch for $file: expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done
+          test "$(jq -r '.commit_sha' "$root/source-lock.json")" = 'c8489e79aa555e4f6768c5549895a05aa045aa3e'
+
+      - name: Validate hostile process and lifecycle contract
+        shell: bash
+        working-directory: evidence/bmscl-infra-77
+        run: |
+          set -euo pipefail
+          ruby <<'RUBY'
+          require "json"
+          require "yaml"
+
+          contract = JSON.parse(File.read("modules/tenant_runtime/security/hostile-process-contract.v1.json"))
+          policy = YAML.safe_load(
+            File.read("deploy/baremetal/.ores-proc-isolation.yaml"),
+            permitted_classes: [], permitted_symbols: [], aliases: false
+          )
+          docs = File.read("deploy/baremetal/process-lifecycle.md")
+          checker = File.read("scripts/check-lifecycle-agent-contract.mjs")
+          security_readme = File.read("modules/tenant_runtime/security/README.md")
+
+          abort "schema drift" unless contract.fetch("schema_version") == 1
+          abort "tenant boundary drift" unless contract.fetch("tenant_boundary") == "one-tenant-per-beam-vm"
+          authorities = contract.fetch("trusted_authorities")
+          abort "demand became tenant-authored" unless authorities.fetch("demand_observation") == "host-control-plane"
+          abort "process identity drift" unless authorities.fetch("process_identity") == "host-runtime-record"
+          abort "placement epoch drift" unless authorities.fetch("placement_epoch") == "host-scheduler"
+          abort "fencing authority drift" unless authorities.fetch("lifecycle_fencing") == "ores-locks-and-leases"
+
+          evidence = contract.fetch("required_process_evidence")
+          abort "NoNewPrivs required" unless evidence.fetch("no_new_privs") == true
+          abort "capability evidence drift" unless evidence.fetch("zero_capability_sets").sort == %w[ambient bounding effective inheritable permitted].sort
+          abort "namespace evidence drift" unless evidence.fetch("namespaces_distinct_from_host").sort == %w[cgroup ipc mount network pid user uts].sort
+          %w[bind_process_start_identity bind_managed_cgroup bind_runtime_epoch bind_placement_epoch bind_isolation_policy_digest].each do |key|
+            abort "missing #{key}" unless evidence.fetch(key) == true
+          end
+
+          lifecycle = contract.fetch("lifecycle")
+          %w[controller_must_be_outside_managed_cgroup recheck_trusted_demand_after_fence recheck_trusted_demand_after_cooperative_quiesce require_host_admission_after_thaw_or_restore freeze_requires_persisted_intent_before_effect thaw_requires_persisted_intent_before_effect running_requires_post_wake_host_admission].each do |key|
+            abort "lifecycle fail-closed invariant missing: #{key}" unless lifecycle.fetch(key) == true
+          end
+          expected_identity = %w[fencing_token isolation_policy_digest logical_workload_id managed_cgroup placement_epoch process_start_identity runtime_epoch]
+          abort "mutation identity drift" unless lifecycle.fetch("mutation_identity_components").sort == expected_identity.sort
+          abort "mutation target drift" unless lifecycle.fetch("mutation_target") == "managed-cgroup-plus-process-start-identity"
+          abort "generic host effects drift" unless lifecycle.fetch("generic_host_effects") == %w[freeze thaw]
+          abort "generic hibernate must remain disabled" unless lifecycle.fetch("generic_hibernate_authority") == false
+          abort "tenant cannot select mutation target" unless lifecycle.fetch("tenant_supplied_process_target_allowed") == false
+          abort "product socket must remain cooperative" unless lifecycle.fetch("product_socket_role") == "cooperative-evidence-only"
+          abort "BeamScale native lock cannot bootstrap BeamScale" unless lifecycle.fetch("beamscale_native_lock_required_for_bootstrap") == false
+
+          shared_key = "process-lifecycle/beamscale/<cluster>/<workload>"
+          abort "lease key drift" unless lifecycle.fetch("lease_key_shape") == shared_key
+          abort "docs lease key mismatch" unless docs.include?(shared_key)
+          abort "checker lease key mismatch" unless checker.include?(shared_key)
+          abort "legacy lease key still documented" if docs.include?("beamscale/runtime-lifecycle/<environment>/<region>/<runtime-id>")
+          abort "node must be excluded from lifecycle lock" unless docs.include?("Node identity is deliberately excluded")
+
+          tenant = policy.fetch("groups").fetch(contract.fetch("isolation_profile"))
+          abort "tenant worker membership drift" unless tenant.fetch("members") == ["bmscl-worker"]
+          mounts = tenant.fetch("filesystem").fetch("read_only")
+          required_mounts = contract.dig("filesystem", "required_read_only_mounts")
+          abort "required honeypot mounts missing" unless (required_mounts - mounts).empty?
+          forbidden = contract.dig("filesystem", "forbid_broad_host_mounts")
+          abort "broad host mount admitted" unless (mounts & forbidden).empty?
+          abort "tenant PATH drift" unless tenant.fetch("environment").fetch("PATH") == contract.dig("filesystem", "tenant_path")
+          abort "host loopback must remain denied" unless tenant.fetch("network").fetch("deny_loopback") == true
+          abort "private networks must remain denied" unless tenant.fetch("network").fetch("deny_private_networks") == true
+          worker = policy.fetch("processes").fetch("bmscl-worker")
+          abort "worker group drift" unless worker.fetch("group") == "tenant-worker"
+          abort "worker command drift" unless worker.fetch("command") == ["/usr/local/bin/bmscl-worker-host"]
+
+          abort "security README overclaims kernel proof" unless security_readme.downcase.include?("container-only ci")
+          puts "BeamScale PR77 hostile lifecycle contract: OK"
+          RUBY
+
+      - name: Guard freeze-only first tranche
+        shell: bash
+        working-directory: evidence/bmscl-infra-77
+        run: |
+          set -euo pipefail
+          contract='modules/tenant_runtime/security/hostile-process-contract.v1.json'
+          jq -e '.lifecycle.generic_host_effects == ["freeze", "thaw"]' "$contract" >/dev/null
+          jq -e '.lifecycle.generic_hibernate_authority == false' "$contract" >/dev/null
+          jq -e '.lifecycle.product_socket_role == "cooperative-evidence-only"' "$contract" >/dev/null
+          jq -e '.lifecycle.tenant_supplied_process_target_allowed == false' "$contract" >/dev/null
