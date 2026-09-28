@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "scintilla-run/scintilla-infra",
+  "pull_request": 41,
+  "commit_sha": "f90981eb6177d34951871e81e93e8b8f0b88e9ca",
+  "files": {
+    "fleet/nixos/scintilla-lifecycle-agent.nix": "96d471636a772d2a12653669ed16a0a6583b8462",
+    "scripts/check-lifecycle-agent-contract.mjs": "9880b21a904565c8c756f8b499d134324c3c2475"
+  }
+}
