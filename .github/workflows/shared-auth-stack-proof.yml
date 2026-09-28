@@ -1,0 +1,255 @@
+name: Shared Auth exact-stack external proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shared-auth-stack-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SERVER_SHA: 9a05d5858a1db6e8de2a4f7f944c0109bf5023b9
+  INFRA_SHA: 0ace167bc82315c310d1fc2bba16e52d25bec79f
+  UI_SHA: f4088c8395ebd76eaf50bb2af4598df32bb59a03
+  ORES_COMPOSE_SHA: c52d08c875e73892acb88897c3b4a8969ad37ff2
+
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact Shared Auth server head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth/shared-auth-server.rs
+          ref: ${{ env.SERVER_SHA }}
+          path: server
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify exact SHA and Rust gates
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SERVER_SHA"
+          cargo fmt --all -- --check
+          cargo check --all-targets
+          cargo test --lib neon::tests
+          cargo test --lib provider_exchange::tests
+
+  server-hardening:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact Shared Auth server head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth/shared-auth-server.rs
+          ref: ${{ env.SERVER_SHA }}
+          path: server
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - name: Enforce immutable config and read-only exchange
+        shell: python
+        run: |
+          from pathlib import Path
+
+          neon = Path('server/src/neon.rs').read_text()
+          forbidden = [
+              'std::env::var("AUTH_NEON_PROJECTS")',
+              'std::env::var("AUTH_NEON_AUTH_REGISTRY")',
+          ]
+          hits = [item for item in forbidden if item in neon]
+          if hits:
+              raise SystemExit(f'Neon registry bypasses immutable EnvMap: {hits}')
+
+          exchange_source = Path('server/src/provider_exchange.rs').read_text()
+          start = exchange_source.index('async fn exchange(')
+          end = exchange_source.index('async fn verify_pair(', start)
+          exchange = exchange_source[start:end]
+          mutators = [name for name in ('upsert_supabase_identity', 'upsert_neon', 'enroll_external_pair') if name in exchange]
+          if mutators:
+              raise SystemExit(f'login exchange mutates provider identity state before pair proof: {mutators}')
+
+          print('Shared Auth server hardening invariants: OK')
+
+  edge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact Shared Auth infra head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth/shared-auth-infra
+          ref: ${{ env.INFRA_SHA }}
+          path: infra
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact SHA and existing provider-race suite
+        working-directory: infra/workers/auth-provider-race
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C ../.. rev-parse HEAD)" = "$INFRA_SHA"
+          npm install --ignore-scripts
+          npm run check
+          npm test
+      - name: Reject plaintext non-loopback Shared Auth origins
+        working-directory: infra/workers/auth-provider-race
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { handleRequest } from './src/index.mjs';
+
+          const env = {
+            SUPABASE_URL: 'https://project.supabase.co',
+            SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test_0123456789',
+            NEON_AUTH_URL: 'https://ep-test.neonauth.us-east-1.aws.neon.tech/neondb/auth',
+            SHARED_AUTH_BASE: 'http://attacker.example',
+            APP_ORIGINS: 'https://app.example',
+          };
+          let fetchCalls = 0;
+          const response = await handleRequest(
+            new Request('https://edge.example/auth/sign-in', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', origin: 'https://app.example' },
+              body: JSON.stringify({ email: 'user@example.test', password: 'correct-horse-battery' }),
+            }),
+            env,
+            async () => {
+              fetchCalls += 1;
+              throw new Error('network must not be reached for invalid origin config');
+            },
+          );
+          const body = await response.json();
+          if (response.status !== 503 || body.error !== 'auth_edge_misconfigured' || fetchCalls !== 0) {
+            throw new Error(`plaintext non-loopback origin was admitted: status=${response.status} error=${body.error} fetchCalls=${fetchCalls}`);
+          }
+          console.log('non-loopback plaintext Shared Auth origin rejected: OK');
+          NODE
+
+  compose-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact Shared Auth infra head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth/shared-auth-infra
+          ref: ${{ env.INFRA_SHA }}
+          path: shared-auth-infra
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - name: Check out exact Shared Auth server head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth/shared-auth-server.rs
+          ref: ${{ env.SERVER_SHA }}
+          path: shared-auth-server.rs
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - name: Check out pinned ores-compose
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ores-compose
+          ref: ${{ env.ORES_COMPOSE_SHA }}
+          path: ores-compose
+          persist-credentials: false
+          show-progress: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify ores-compose CLI and Shared Auth topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- --version
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- check shared-auth-infra/.ores-compose.yaml
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- plan shared-auth-infra/.ores-compose.yaml >/tmp/shared-auth-plan.txt
+          test -s /tmp/shared-auth-plan.txt
+
+  ui-typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact UI matrix head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth-test/lib-clients-consumer-matrix
+          ref: ${{ env.UI_SHA }}
+          path: ui
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build TypeScript login/signup app
+        working-directory: ui/auth-ui/typescript
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C ../.. rev-parse HEAD)" = "$UI_SHA"
+          npm install --ignore-scripts
+          npm run check
+          npm run build
+
+  ui-rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact UI matrix head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth-test/lib-clients-consumer-matrix
+          ref: ${{ env.UI_SHA }}
+          path: ui
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build Rust/Dioxus login/signup app
+        working-directory: ui/auth-ui/rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C ../.. rev-parse HEAD)" = "$UI_SHA"
+          cargo check --target wasm32-unknown-unknown
+
+  ui-flutter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact UI matrix head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: shared-auth-test/lib-clients-consumer-matrix
+          ref: ${{ env.UI_SHA }}
+          path: ui
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.FLEET_SOURCE_PAT || secrets.GH_PAT }}
+          persist-credentials: false
+          show-progress: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Analyze and build Flutter login/signup app
+        working-directory: ui/auth-ui/flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C ../.. rev-parse HEAD)" = "$UI_SHA"
+          flutter pub get
+          flutter analyze
+          flutter build web --dart-define=SHARED_AUTH_EDGE=http://127.0.0.1:8787
