@@ -1,0 +1,84 @@
+    return json(400, { error: "invalid_json" });
+  }
+}
+
+function corsPreflight(request, env) {
+  const headers = corsHeaders(request, env);
+  if (!headers["access-control-allow-origin"]) {
+    return json(403, { error: "origin_not_allowed" });
+  }
+  return new Response(null, {
+    status: 204,
+    headers: {
+      ...headers,
+      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-max-age": "600",
+    },
+  });
+}
+
+function corsHeaders(request, env) {
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    return {};
+  }
+  const allowed = String(env.APP_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 16);
+  if (!allowed.includes(origin)) {
+    return {};
+  }
+  return {
+    "access-control-allow-origin": origin,
+    vary: "Origin",
+  };
+}
+
+function withCors(response, request, env) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(corsHeaders(request, env))) {
+    headers.set(name, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function requiredHttpsUrl(value) {
+  const parsed = new URL(requiredBounded(value, 8, 2048));
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash || parsed.search) {
+    throw new Error("invalid https URL");
+  }
+  return parsed;
+}
+
+function requiredHttpUrl(value) {
+  const parsed = new URL(requiredBounded(value, 8, 2048));
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash || parsed.search) {
+    throw new Error("invalid http URL");
+  }
+  return parsed;
+}
+
+function requiredBounded(value, min, max) {
+  if (typeof value !== "string") {
+    throw new Error("missing configuration");
+  }
+  const normalized = value.trim();
+  if (normalized.length < min || normalized.length > max) {
+    throw new Error("invalid configuration");
+  }
+  return normalized;
+}
+
+function json(status, body, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...JSON_HEADERS, ...extraHeaders },
+  });
+}
