@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "repository": "beamscale/bmscl-infra",
+  "pull_request": 76,
+  "commit_sha": "fb9783e344c0fe021d2242c541ea849fc752ae4b",
+  "files": {
+    "deploy/baremetal/nixos/bmscl-lifecycle-agent.nix": "f7150f929581b90e7150a6c35b4a88aa1c80fc61",
+    "deploy/baremetal/README.md": "8192682d7dc99b84e451e1853fac26027d749be5",
+    "deploy/baremetal/process-lifecycle.md": "3e4d9b55c637eb30e99f6baf8a55c41abe4ff0c6",
+    "scripts/check-lifecycle-agent-contract.mjs": "d982e7c50f001b450a5484287495b8e92483c85e"
+  }
+}
