@@ -1,0 +1,52 @@
+schema_version: ores.compose.v1
+project: shared-auth
+allow_lazy_start: false
+
+services:
+  shared-auth-server:
+    runtime: host
+    working_dir: ../shared-auth-server.rs
+    command: ["cargo", "run", "--locked", "--", "serve"]
+    environment:
+      AUTH_BIND_ADDR: "127.0.0.1:8120"
+    inherit_env:
+      - AUTH_DATABASE_URL
+      - AUTH_ALLOW_DBLESS
+      - AUTH_SUPABASE_PROJECTS
+      - AUTH_NEON_PROJECTS
+      - AUTH_NEON_AUTH_REGISTRY
+      - AUTH_SIGNING_KEY_PEM
+      - AUTH_SIGNING_KEY_FILE
+      - AUTH_SIGNING_KID
+      - AUTH_ISSUER
+      - AUTH_AUDIENCE
+      - AUTH_ACCESS_TOKEN_TTL_SECS
+      - AUTH_REFRESH_TOKEN_TTL_SECS
+      - AUTH_CORS_ALLOW_ORIGINS
+      - AUTH_REALM
+      - AUTH_DEPLOYMENT
+    healthcheck:
+      command: ["curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8120/readyz"]
+      interval_ms: 1000
+      timeout_ms: 2000
+      retries: 30
+
+  auth-provider-race:
+    runtime: host
+    working_dir: workers/auth-provider-race
+    build:
+      - ["npm", "install", "--ignore-scripts"]
+    command: ["npx", "wrangler", "dev", "--local", "--ip", "127.0.0.1", "--port", "8787"]
+    depends_on: ["shared-auth-server"]
+    environment:
+      SHARED_AUTH_BASE: "http://127.0.0.1:8120"
+    inherit_env:
+      - SUPABASE_URL
+      - SUPABASE_PUBLISHABLE_KEY
+      - NEON_AUTH_URL
+      - APP_ORIGINS
+    healthcheck:
+      command: ["curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8787/readyz"]
+      interval_ms: 1000
+      timeout_ms: 2000
+      retries: 30
