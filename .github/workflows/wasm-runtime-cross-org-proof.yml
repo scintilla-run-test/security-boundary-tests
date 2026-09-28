@@ -1,0 +1,400 @@
+name: WASM runtime cross-org deep proof
+
+on:
+  push:
+    branches:
+      - probe/wasm-runtime-deep-20260928
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-runtime-cross-org-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wasmx-live-e2e:
+    name: wasm-xprs live receipt + port + security proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout merged wasm-xprs daemon main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wasm-xprs/wasmx-desktop-daemon
+          ref: 9906d0bdfc4fe1760fca75569670f91e793e1c85
+          path: daemon
+          persist-credentials: false
+
+      - name: Checkout receipt-handoff CLI head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wasm-xprs/wasmx-desktop-cli
+          ref: 748de62e320b64b9659848db990d52a9420f9194
+          path: cli
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compose receipt and port CLI PRs in-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C cli fetch --no-tags origin \
+            refs/heads/alexanderdmills/den-3045-unique-desktop-port:refs/remotes/origin/port-proof
+          git -C cli -c user.name='cross-org-proof' -c user.email='proof@example.invalid' \
+            merge --no-commit --no-ff refs/remotes/origin/port-proof
+          grep -q '127.0.0.1:8766' cli/.cli-flags.toml
+          grep -q 'WASMX_DESKTOP_ORES_RECEIPT' cli/src/main.rs
+
+      - name: Install Rust 1.96
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: clippy,rustfmt
+
+      - name: Build and rerun full debug suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path daemon/Cargo.toml --all -- --check
+          cargo test --manifest-path daemon/Cargo.toml --all-targets
+          cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+          cargo fmt --manifest-path cli/Cargo.toml --all -- --check
+          cargo test --manifest-path cli/Cargo.toml --all-targets
+          cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
+          cargo build --manifest-path daemon/Cargo.toml
+          cargo build --manifest-path cli/Cargo.toml
+
+      - name: Build independent canonical adapter/receipt fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fixture
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('fixture')
+          # Valid Wasm: () -> i32 function exported as wasmx_main plus one memory.
+          module = bytes.fromhex(
+              '0061736d01000000'
+              '0105016000017f'
+              '03020100'
+              '0503010001'
+              '071702066d656d6f727902000a7761736d785f6d61696e0000'
+              '0a0601040041000b'
+          )
+          module2 = bytes.fromhex(
+              '0061736d01000000'
+              '0105016000017f'
+              '03020100'
+              '0503010001'
+              '071702066d656d6f727902000a7761736d785f6d61696e0000'
+              '0a0601040041010b'
+          )
+          (root/'module.wasm').write_bytes(module)
+          (root/'module-drift.wasm').write_bytes(module2)
+          source_sha = 'c' * 64
+          adapter = {
+              'schema_version': 'ores.lambda.adapter/v1',
+              'generated_by': 'ores-stack',
+              'provider': 'wasm_xprs',
+              'runtime_repository': 'wasm-xprs/wasmx-lambdas',
+              'runtime_contract': 'wasm-xprs.lambda-runtime/v1',
+              'execution_boundary': 'wasmtime_store_instance',
+              'isolation_model': 'fresh_store_and_instance_per_invocation',
+              'artifact_kind': 'wasm_module',
+              'module_cache_policy': 'compiled_module_allowed',
+              'invocation_instance_reuse': 'forbidden',
+              'ambient_import_policy': 'explicit_wasmx_v1_only',
+              'durable_state': 'external_only',
+              'source': 'src/routes/echo/lambda.rs',
+              'source_sha256': source_sha,
+          }
+          adapter_bytes = json.dumps(adapter, separators=(',', ':'), sort_keys=True).encode()
+          (root/'adapter.json').write_bytes(adapter_bytes)
+          receipt = {
+              'schema_version': 'ores.lambda.wasm-artifact.receipt/v1',
+              'generated_by': 'ores-stack',
+              'provider': 'wasm_xprs',
+              'runtime_repository': 'wasm-xprs/wasmx-lambdas',
+              'runtime_contract': 'wasm-xprs.lambda-runtime/v1',
+              'adapter_contract': 'ores.lambda.adapter/v1',
+              'artifact_path': 'build/lambda/wasm_xprs/module.wasm',
+              'artifact_sha256': hashlib.sha256(module).hexdigest(),
+              'deploy_mutation_performed': False,
+              'target_triple': 'wasm32-unknown-unknown',
+              'adapter_path': 'generated/lambda-adapters/wasm_xprs/adapter.json',
+              'adapter_sha256': hashlib.sha256(adapter_bytes).hexdigest(),
+              'source_path': 'src/routes/echo/lambda.rs',
+              'source_sha256': source_sha,
+              'cargo_manifest_path': 'Cargo.toml',
+              'cargo_package': 'cross-org-proof',
+              'cargo_target_name': 'ores_wasm_lambda_unit',
+              'wrapper_sha256': 'd' * 64,
+              'unit_manifest_sha256': 'e' * 64,
+          }
+          receipt_bytes = json.dumps(receipt, separators=(',', ':'), sort_keys=True).encode()
+          (root/'receipt.json').write_bytes(receipt_bytes)
+          bad = dict(receipt)
+          bad['artifact_sha256'] = '0' * 64
+          (root/'receipt-tampered.json').write_text(json.dumps(bad, separators=(',', ':'), sort_keys=True))
+          (root/'adapter-reformatted.json').write_bytes(adapter_bytes + b'\n')
+          PY
+
+      - name: Start daemon and prove canonical live contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PROOF_HOME="$RUNNER_TEMP/wasmx-home"
+          export PROOF_ARTIFACTS="$RUNNER_TEMP/wasmx-artifacts"
+          mkdir -p "$PROOF_HOME"
+          HOME="$PROOF_HOME" WASMX_ARTIFACT_ROOT="$PROOF_ARTIFACTS" \
+            ./daemon/target/debug/wasmx-desktop-daemon >"$RUNNER_TEMP/wasmx-daemon.log" 2>&1 &
+          echo $! >"$RUNNER_TEMP/wasmx-daemon.pid"
+          cleanup() {
+            if test -f "$RUNNER_TEMP/wasmx-daemon.pid"; then
+              kill "$(cat "$RUNNER_TEMP/wasmx-daemon.pid")" 2>/dev/null || true
+              wait "$(cat "$RUNNER_TEMP/wasmx-daemon.pid")" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8766/healthz >/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+          curl -fsS http://127.0.0.1:8766/healthz | grep -qx ok
+          if curl --max-time 1 -fsS http://127.0.0.1:8765/healthz >/dev/null 2>&1; then
+            echo 'legacy port 8765 unexpectedly accepts traffic' >&2
+            exit 1
+          fi
+          unauth=$(curl -sS -o "$RUNNER_TEMP/unauth.txt" -w '%{http_code}' http://127.0.0.1:8766/v1/status)
+          test "$unauth" = 401
+          TOKEN=$(cat "$PROOF_HOME/.wasm-xprs/daemon/token")
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8766/v1/status >"$RUNNER_TEMP/status.json"
+          python3 - "$RUNNER_TEMP/status.json" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value['runtime'] == 'wasmtime', value
+          assert value['target_triple'] == 'wasm32-unknown-unknown', value
+          assert value['guest_abi'] == 'wasmx-v1', value
+          assert value['wasi_enabled'] is False, value
+          assert value['store_per_invocation'] is True, value
+          assert value['isolation'] == 'fresh_store_per_invocation', value
+          PY
+
+      - name: Prove composed CLI uses 8766 and verifies daemon contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/wasmx-home"
+          (cd cli && ./target/debug/wasmx-desktop-cli doctor) >"$RUNNER_TEMP/doctor.json"
+          python3 - "$RUNNER_TEMP/doctor.json" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value['ready'] is True, value
+          assert value['runtime_contract_verified'] is True, value
+          assert value['status']['target_triple'] == 'wasm32-unknown-unknown', value
+          assert value['status']['wasi_enabled'] is False, value
+          PY
+
+      - name: Prove exact raw adapter + receipt handoff end-to-end
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/wasmx-home"
+          MODULE="$GITHUB_WORKSPACE/fixture/module.wasm"
+          ADAPTER="$GITHUB_WORKSPACE/fixture/adapter.json"
+          RECEIPT="$GITHUB_WORKSPACE/fixture/receipt.json"
+          (cd cli && ./target/debug/wasmx-desktop-cli deploy \
+            --tenant proof-tenant \
+            --deployment receipt-v1 \
+            --module "$MODULE" \
+            --ores-adapter "$ADAPTER" \
+            --ores-receipt "$RECEIPT") >"$RUNNER_TEMP/deploy.json"
+          python3 - "$RUNNER_TEMP/deploy.json" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value['tenant_id'] == 'proof-tenant', value
+          assert value['deployment_id'] == 'receipt-v1', value
+          assert value['compiled'] is True, value
+          assert value['ores_adapter_verified'] is True, value
+          assert value['ores_receipt_verified'] is True, value
+          PY
+          (cd cli && ./target/debug/wasmx-desktop-cli inspect \
+            --tenant proof-tenant --deployment receipt-v1) >"$RUNNER_TEMP/inspect.json"
+          python3 - "$RUNNER_TEMP/inspect.json" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value['integrity_verified'] is True, value
+          assert value['ores_adapter_verified'] is True, value
+          assert value['ores_provenance_bound'] is True, value
+          assert value['ores_build_receipt_bound'] is True, value
+          assert len(value['ores_receipt_sha256']) == 64, value
+          assert len(value['ores_adapter_raw_sha256']) == 64, value
+          PY
+          # Identical receipt-backed redeploy must remain idempotent.
+          (cd cli && ./target/debug/wasmx-desktop-cli deploy \
+            --tenant proof-tenant \
+            --deployment receipt-v1 \
+            --module "$MODULE" \
+            --ores-adapter "$ADAPTER" \
+            --ores-receipt "$RECEIPT") >/dev/null
+
+      - name: Fail closed on receipt, raw-adapter and immutable-ID drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/wasmx-home"
+          cli_cmd='./target/debug/wasmx-desktop-cli'
+          if (cd cli && $cli_cmd deploy \
+              --tenant proof-tenant --deployment bad-receipt \
+              --module "$GITHUB_WORKSPACE/fixture/module.wasm" \
+              --ores-adapter "$GITHUB_WORKSPACE/fixture/adapter.json" \
+              --ores-receipt "$GITHUB_WORKSPACE/fixture/receipt-tampered.json"); then
+            echo 'tampered receipt was accepted' >&2
+            exit 1
+          fi
+          if (cd cli && $cli_cmd deploy \
+              --tenant proof-tenant --deployment reformatted-adapter \
+              --module "$GITHUB_WORKSPACE/fixture/module.wasm" \
+              --ores-adapter "$GITHUB_WORKSPACE/fixture/adapter-reformatted.json" \
+              --ores-receipt "$GITHUB_WORKSPACE/fixture/receipt.json"); then
+            echo 'receipt did not bind exact raw adapter bytes' >&2
+            exit 1
+          fi
+          if (cd cli && $cli_cmd deploy \
+              --tenant proof-tenant --deployment receipt-v1 \
+              --module "$GITHUB_WORKSPACE/fixture/module-drift.wasm"); then
+            echo 'immutable deployment id accepted different module bytes' >&2
+            exit 1
+          fi
+
+      - name: Fail closed on partial receipt evidence at daemon boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PROOF_HOME="$RUNNER_TEMP/wasmx-home"
+          TOKEN=$(cat "$PROOF_HOME/.wasm-xprs/daemon/token")
+          python3 - <<'PY'
+          import base64, json, pathlib
+          root = pathlib.Path('fixture')
+          body = {
+              'tenant_id': 'proof-tenant',
+              'deployment_id': 'partial-evidence',
+              'wasm_base64': base64.b64encode((root/'module.wasm').read_bytes()).decode(),
+              'ores_adapter': json.loads((root/'adapter.json').read_text()),
+              'ores_adapter_raw_base64': base64.b64encode((root/'adapter.json').read_bytes()).decode(),
+          }
+          pathlib.Path('fixture/partial.json').write_text(json.dumps(body))
+          PY
+          code=$(curl -sS -o "$RUNNER_TEMP/partial.out" -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data-binary @fixture/partial.json \
+            http://127.0.0.1:8766/v1/deploy)
+          test "$code" = 400
+          grep -q 'exact raw adapter and receipt bytes' "$RUNNER_TEMP/partial.out"
+
+      - name: Fail closed on weak and symlink token files in a live process
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID=$(cat "$RUNNER_TEMP/wasmx-daemon.pid")
+          kill "$PID"
+          wait "$PID" || true
+          rm -f "$RUNNER_TEMP/wasmx-daemon.pid"
+          export PROOF_HOME="$RUNNER_TEMP/wasmx-home"
+          TOKEN_PATH="$PROOF_HOME/.wasm-xprs/daemon/token"
+          chmod 0644 "$TOKEN_PATH"
+          set +e
+          HOME="$PROOF_HOME" WASMX_ARTIFACT_ROOT="$RUNNER_TEMP/wasmx-artifacts" \
+            timeout 5s ./daemon/target/debug/wasmx-desktop-daemon >"$RUNNER_TEMP/weak-token.log" 2>&1
+          rc=$?
+          set -e
+          if test "$rc" = 124; then
+            echo 'daemon stayed alive with group/world-readable token' >&2
+            exit 1
+          fi
+          grep -q 'owner-only' "$RUNNER_TEMP/weak-token.log"
+          chmod 0600 "$TOKEN_PATH"
+          mv "$TOKEN_PATH" "$TOKEN_PATH.real"
+          ln -s "$TOKEN_PATH.real" "$TOKEN_PATH"
+          set +e
+          HOME="$PROOF_HOME" WASMX_ARTIFACT_ROOT="$RUNNER_TEMP/wasmx-artifacts" \
+            timeout 5s ./daemon/target/debug/wasmx-desktop-daemon >"$RUNNER_TEMP/symlink-token.log" 2>&1
+          rc=$?
+          set -e
+          if test "$rc" = 124; then
+            echo 'daemon stayed alive with symlink token path' >&2
+            exit 1
+          fi
+          grep -q 'must not be a symlink' "$RUNNER_TEMP/symlink-token.log"
+
+  wasmx-cross-platform-release:
+    name: wasm-xprs composed CLI + daemon release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wasm-xprs/wasmx-desktop-daemon
+          ref: 9906d0bdfc4fe1760fca75569670f91e793e1c85
+          path: daemon
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wasm-xprs/wasmx-desktop-cli
+          ref: 748de62e320b64b9659848db990d52a9420f9194
+          path: cli
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compose open CLI PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C cli fetch --no-tags origin \
+            refs/heads/alexanderdmills/den-3045-unique-desktop-port:refs/remotes/origin/port-proof
+          git -C cli -c user.name='cross-org-proof' -c user.email='proof@example.invalid' \
+            merge --no-commit --no-ff refs/remotes/origin/port-proof
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: clippy,rustfmt
+      - name: Release tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path daemon/Cargo.toml --all-targets --release
+          cargo test --manifest-path cli/Cargo.toml --all-targets --release
+
+  lunatic-token-release-matrix:
+    name: Lunatic token boundary release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: lunatic-lorry/ll-desktop-daemon
+          ref: d04bdf554ad2d75ff8dcd21f79d2dd1b7aedc42f
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - name: Release tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --all-targets --release
+          cargo clippy --all-targets -- -D warnings
