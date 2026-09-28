@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repository": "beamscale/bmscl-infra",
+  "pull_request": 77,
+  "commit_sha": "c8489e79aa555e4f6768c5549895a05aa045aa3e",
+  "files": {
+    "modules/tenant_runtime/security/hostile-process-contract.v1.json": "5a04f7afe439b827464e63c32f93f744e91c5ac4",
+    "deploy/baremetal/.ores-proc-isolation.yaml": "f237567df1dc51b0f55620d94c3c381ac4fea8ea",
+    "deploy/baremetal/process-lifecycle.md": "b1b85a2354553a9ef2320425b6b4fb3b6d144e4f",
+    "scripts/check-lifecycle-agent-contract.mjs": "55c1b237fce7e73b2185eccb0f2c99f78a10d7c3",
+    "modules/tenant_runtime/security/README.md": "6c398658665c63c22a391af76dda3e4a326a137a"
+  }
+}
