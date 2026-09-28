@@ -3,6 +3,7 @@
     "repository": "shared-auth/shared-auth-infra",
     "commit_sha": "0ace167bc82315c310d1fc2bba16e52d25bec79f",
     "files": {
+      ".ores-compose.yaml": "11e23dd9bd986227953faa55427f33cdcfdcf458",
       "workers/auth-provider-race/package.json": "a4be9c2df1428b0ed3978ec114de78d5c2d5fefb",
       "workers/auth-provider-race/src/index.mjs": "9fd0e1543ab9494e321ea1cb7ad0ab3b993a8800",
       "workers/auth-provider-race/test/index.test.mjs": "620507eb67ebfa84a4bad1e58018f433f193ea61"
