@@ -1,0 +1,179 @@
+  const headerJwt = tokenResponse.headers.get("set-auth-jwt");
+  if (isProviderToken(headerJwt)) {
+    return { ok: true, access_token: headerJwt };
+  }
+  let value;
+  try {
+    value = await tokenResponse.json();
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+  const jwt = value?.token ?? value?.data?.token;
+  if (!isProviderToken(jwt)) {
+    return { ok: false, kind: "unavailable" };
+  }
+  return { ok: true, access_token: jwt };
+}
+
+async function jsonTokenRequest(target, payload, extraHeaders, provider, operation, fetchImpl) {
+  let response;
+  try {
+    response = await fetchImpl(target, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        ...extraHeaders,
+      },
+      body: JSON.stringify(payload),
+      redirect: "manual",
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+  const failure = classifyProviderFailure(response, operation);
+  if (failure !== null) {
+    return failure;
+  }
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+  const accessToken = extractJsonAccessToken(provider, value);
+  if (!isProviderToken(accessToken)) {
+    return operation === "sign-up"
+      ? { ok: false, kind: "verification_required" }
+      : { ok: false, kind: "unavailable" };
+  }
+  return { ok: true, access_token: accessToken };
+}
+
+function classifyProviderFailure(response, operation) {
+  if (response.status >= 500 || response.status === 429) {
+    return { ok: false, kind: "unavailable" };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      kind: operation === "sign-up" && (response.status === 409 || response.status === 422)
+        ? "conflict"
+        : "invalid",
+    };
+  }
+  return null;
+}
+
+function extractJsonAccessToken(provider, value) {
+  if (provider === "supabase") {
+    return value?.access_token ?? value?.session?.access_token ?? value?.data?.session?.access_token;
+  }
+  return value?.token ?? value?.access_token ?? value?.data?.token;
+}
+
+function cookieHeaderFrom(headers) {
+  let raw = [];
+  if (typeof headers.getSetCookie === "function") {
+    raw = headers.getSetCookie();
+  }
+  if (raw.length === 0) {
+    const fallback = headers.get("set-cookie");
+    if (fallback) {
+      raw = [fallback];
+    }
+  }
+  const pairs = raw
+    .map((value) => value.split(";", 1)[0]?.trim())
+    .filter((value) => typeof value === "string" && value.includes("=") && !/[\r\n]/.test(value));
+  if (pairs.length === 0) {
+    return null;
+  }
+  const cookie = pairs.join("; ");
+  if (cookie.length > MAX_COOKIE_BYTES) {
+    return null;
+  }
+  return cookie;
+}
+
+function isProviderToken(value) {
+  return typeof value === "string"
+    && value.length >= 32
+    && value.length <= MAX_PROVIDER_TOKEN_BYTES
+    && !/[\r\n\0]/.test(value);
+}
+
+function authUrl(base, suffix) {
+  const path = base.pathname.replace(/\/$/, "");
+  return new URL(`${path}${suffix}`, base.origin);
+}
+
+async function callSharedAuth(path, providerResult, config, fetchImpl) {
+  const target = new URL(path, config.sharedAuthBase);
+  let response;
+  try {
+    response = await fetchImpl(target, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        supabase_access_token: providerResult.supabase_access_token,
+        neon_access_token: providerResult.neon_access_token,
+      }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(SHARED_AUTH_TIMEOUT_MS),
+    });
+  } catch {
+    return json(503, { error: "shared_auth_unavailable" });
+  }
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("x-ores-provider-race-first", providerResult.first_provider);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function loadConfig(env) {
+  const supabaseUrl = requiredHttpsUrl(env.SUPABASE_URL);
+  const neonAuthUrl = requiredHttpsUrl(env.NEON_AUTH_URL);
+  const sharedAuthBase = requiredHttpUrl(env.SHARED_AUTH_BASE);
+  const supabasePublishableKey = requiredBounded(env.SUPABASE_PUBLISHABLE_KEY, 20, 4096);
+  return { supabaseUrl, neonAuthUrl, sharedAuthBase, supabasePublishableKey };
+}
+
+function validateCredentials(body, operation) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return json(400, { error: "invalid_request" });
+  }
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (email.length < 3 || email.length > 320 || !email.includes("@") || password.length < 8 || password.length > 1024) {
+    return json(400, { error: "invalid_credentials_shape" });
+  }
+  if (operation === "sign-up" && name.length > 160) {
+    return json(400, { error: "invalid_name" });
+  }
+  return { email, password, name: name || undefined };
+}
+
+async function readJsonBody(request) {
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return json(413, { error: "request_too_large" });
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_BODY_BYTES) {
+    return json(413, { error: "request_too_large" });
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
