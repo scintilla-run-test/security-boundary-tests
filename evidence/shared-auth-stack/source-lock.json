@@ -1,0 +1,29 @@
+{
+  "shared_auth_infra": {
+    "repository": "shared-auth/shared-auth-infra",
+    "commit_sha": "0ace167bc82315c310d1fc2bba16e52d25bec79f",
+    "files": {
+      "workers/auth-provider-race/package.json": "a4be9c2df1428b0ed3978ec114de78d5c2d5fefb",
+      "workers/auth-provider-race/src/index.mjs": "9fd0e1543ab9494e321ea1cb7ad0ab3b993a8800",
+      "workers/auth-provider-race/test/index.test.mjs": "620507eb67ebfa84a4bad1e58018f433f193ea61"
+    }
+  },
+  "shared_auth_server": {
+    "repository": "shared-auth/shared-auth-server.rs",
+    "commit_sha": "9a05d5858a1db6e8de2a4f7f944c0109bf5023b9",
+    "files": {
+      "src/neon.rs": {
+        "blob_sha": "c88d7bab8329de4b6d86a655dbb07cbbb3d300bc",
+        "snapshot_lines": "250-360"
+      },
+      "src/provider_exchange.rs": {
+        "blob_sha": "a25df1a99d3ac6bfb7dcfe6d9d7f5af7b4bc9700",
+        "snapshot_lines": "45-115"
+      }
+    }
+  },
+  "ores_compose": {
+    "repository": "ORESoftware/ores-compose",
+    "commit_sha": "c52d08c875e73892acb88897c3b4a8969ad37ff2"
+  }
+}
