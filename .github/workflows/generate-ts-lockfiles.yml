@@ -53,7 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- evidence/ts-lockfiles/*/package-lock.json; then
+          if [ -z "$(git status --porcelain -- evidence/ts-lockfiles/*/package-lock.json)" ]; then
             echo 'lockfiles already committed'
             exit 0
           fi
