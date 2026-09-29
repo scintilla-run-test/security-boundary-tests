@@ -1,11 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum ClaritasSyncState {
-  idle,
-  syncing,
-  current,
-  failed,
-}
+enum ClaritasSyncState { idle, syncing, current, failed }
 
 final class ClaritasSyncStatus extends StatelessWidget {
   const ClaritasSyncStatus({
