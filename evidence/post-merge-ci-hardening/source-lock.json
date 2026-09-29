@@ -1,0 +1,24 @@
+{
+  "sources": {
+    "athlet-o/athleto-pub-lib-core@20f77d10b9768cea26a2b085b1b9bde705c8d0ac": {
+      "athleto-pub-lib-core-ci.yml": "ee5638bab9e5671b70b7d33394cabc64fa39180d"
+    },
+    "athlet-o/athleto-supabase@796a76a4704a8db16b3ac684c9ccdab60f958272": {
+      "athleto-supabase-validate.yml": "a35843332a84bbcb77135bc1712d453c0e71f4ea"
+    },
+    "claritas-viz/claritas-sync@b551fc3270fde8f7a227a8d9bf39a63a83b52276": {
+      "claritas-sync-ci.yml": "64aa675d0664da64ee8da99cd5bf57118c8d466d",
+      "claritas-sync-trace.yml": "fb6ea675fcc3671bada95e83a767c80bc50d1f6d"
+    },
+    "athlet-o/athleto-infra@425ce3e051439e73992e7c9dd7dbc1675de7ffd2": {
+      "athleto-infra-ci.yml": "1881dd805f462254353ec84538554ef9faf7ecd2"
+    },
+    "athlet-o/athleto-backend.rs@acc5ec91413be5c4714057a86143142b0ddf6bf6": {
+      "athleto-backend-ci.yml": "3c5f6c8a4a526d00c2aee88b9ab5dc79664d42b6"
+    },
+    "sonus-auris/sonus-auris-lib@c40c51f244dae7e163059689fc9b70880b5b96f1": {
+      "sonus-ci.yml": "04f5a0cd0a21563312b62554f1b55f48a19571ae",
+      "sonus-phase0.yml": "80e8ff3cb112c0dff2f3f549959383870d1d5863"
+    }
+  }
+}
