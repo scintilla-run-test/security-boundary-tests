@@ -57,8 +57,10 @@ jobs:
           export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"
           export GIT_CONFIG_VALUE_0="https://github.com/"
           mkdir -p ../phase0-results
-          cargo run --release --locked -p sonus-auris-lib --example phase0_boundary_cost > ../phase0-results/native.json
-          cargo run --release --locked -p sonus-auris-lib-ffi --example phase0_ffi_cost > ../phase0-results/ffi.json
+          cargo run --release --locked -p sonus-auris-lib \
+            --example phase0_boundary_cost > ../phase0-results/native.json
+          cargo run --release --locked -p sonus-auris-lib-ffi \
+            --example phase0_ffi_cost > ../phase0-results/ffi.json
           cargo build --release --locked -p sonus-auris-lib-ffi --lib
 
       - name: Record artifact size and prove Dart ABI gating
@@ -69,7 +71,8 @@ jobs:
             Windows) library=target/release/sonus_auris_lib_ffi.dll ;;
             *) exit 64 ;;
           esac
-          python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(json.dumps({"artifact":str(p),"bytes":p.stat().st_size}))' "$library" > ../phase0-results/ffi-size.json
+          python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(json.dumps({"artifact":str(p),"bytes":p.stat().st_size}))' \
+            "$library" > ../phase0-results/ffi-size.json
           dart run ../benchmarks/phase0/dart_ffi_smoke.dart "$library" 1
           if dart run ../benchmarks/phase0/dart_ffi_smoke.dart "$library" 2; then
             echo "intentional ABI mismatch was accepted"
@@ -109,18 +112,21 @@ jobs:
           export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"
           export GIT_CONFIG_VALUE_0="https://github.com/"
           cargo install wasm-pack --version 0.15.0 --locked
-          wasm-pack build rust/crates/sonus-auris-lib-wasm --release --target web
+          wasm-pack build rust/crates/sonus-auris-lib-wasm \
+            --release --target web
 
       - name: Measure Node and browser execution
         run: |
           mkdir -p phase0-results
           node benchmarks/phase0/wasm_cost.mjs > phase0-results/wasm-node.json
           google-chrome --version > phase0-results/chrome-version.txt
-          python3 -m http.server 8765 --bind 127.0.0.1 > phase0-results/http-server.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 \
+            > phase0-results/http-server.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           for attempt in {1..20}; do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:8765/benchmarks/phase0/browser.html; then
+            if curl --fail --silent --output /dev/null \
+              http://127.0.0.1:8765/benchmarks/phase0/browser.html; then
               break
             fi
             if [ "$attempt" = 20 ]; then
@@ -129,12 +135,16 @@ jobs:
             fi
             sleep 0.25
           done
-          google-chrome --headless=new --disable-gpu --no-first-run --dump-dom --virtual-time-budget=30000 http://127.0.0.1:8765/benchmarks/phase0/browser.html > phase0-results/browser.html
+          google-chrome --headless=new --disable-gpu --no-first-run \
+            --dump-dom --virtual-time-budget=30000 \
+            http://127.0.0.1:8765/benchmarks/phase0/browser.html \
+            > phase0-results/browser.html
           grep -q 'data-complete="true"' phase0-results/browser.html
 
       - name: Record compressed package sizes
         run: |
-          python3 -c 'import gzip,json,pathlib; p=pathlib.Path("rust/crates/sonus-auris-lib-wasm/pkg/sonus_auris_lib_wasm_bg.wasm"); data=p.read_bytes(); print(json.dumps({"artifact":str(p),"raw_bytes":len(data),"gzip_9_bytes":len(gzip.compress(data,compresslevel=9))}))' > phase0-results/wasm-size.json
+          python3 -c 'import gzip,json,pathlib; p=pathlib.Path("rust/crates/sonus-auris-lib-wasm/pkg/sonus_auris_lib_wasm_bg.wasm"); data=p.read_bytes(); print(json.dumps({"artifact":str(p),"raw_bytes":len(data),"gzip_9_bytes":len(gzip.compress(data,compresslevel=9))}))' \
+            > phase0-results/wasm-size.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
