@@ -1,0 +1,120 @@
+name: post-merge CI hardening proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/post-merge-ci-hardening-proof.yml'
+      - 'evidence/post-merge-ci-hardening/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify exact source blob identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/post-merge-ci-hardening'
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          root = pathlib.Path('evidence/post-merge-ci-hardening')
+          lock = json.loads((root / 'source-lock.json').read_text())
+          checked = 0
+          for source, files in lock['sources'].items():
+              commit = source.rsplit('@', 1)[1]
+              if len(commit) != 40:
+                  raise SystemExit(f'non-exact source commit: {source}')
+              for name, expected in files.items():
+                  path = root / name
+                  actual = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+                  if actual != expected:
+                      raise SystemExit(f'{name}: expected blob {expected}, got {actual}')
+                  checked += 1
+          if checked != 8:
+              raise SystemExit(f'expected 8 exact workflow blobs, checked {checked}')
+          print(f'verified {checked} exact merged workflow blobs')
+          PY
+
+      - name: Actionlint exact merged workflow blobs
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # v1.7.12
+        with:
+          args: >-
+            evidence/post-merge-ci-hardening/athleto-pub-lib-core-ci.yml
+            evidence/post-merge-ci-hardening/athleto-supabase-validate.yml
+            evidence/post-merge-ci-hardening/claritas-sync-ci.yml
+            evidence/post-merge-ci-hardening/claritas-sync-trace.yml
+            evidence/post-merge-ci-hardening/athleto-infra-ci.yml
+            evidence/post-merge-ci-hardening/athleto-backend-ci.yml
+            evidence/post-merge-ci-hardening/sonus-ci.yml
+            evidence/post-merge-ci-hardening/sonus-phase0.yml
+
+      - name: Enforce workflow supply-chain and runner boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/post-merge-ci-hardening'
+
+          if grep -RFn 'git config --global' "$root"; then
+            echo 'persistent global Git credential rewrite is forbidden' >&2
+            exit 1
+          fi
+          if grep -REn 'uses:[[:space:]]+[^#[:space:]]+@(main|master|stable|v[0-9]+([.][0-9]+)*)' "$root"; then
+            echo 'mutable action selector found' >&2
+            exit 1
+          fi
+
+          grep -F 'github:ORESoftware/ores-contracts#60a23ec75c6ce904857b23fa9ee33df06d0069e0' \
+            "$root/athleto-pub-lib-core-ci.yml"
+          grep -F 'cancel-in-progress: true' "$root/athleto-pub-lib-core-ci.yml"
+          grep -F 'timeout-minutes: 10' "$root/athleto-pub-lib-core-ci.yml"
+
+          grep -F 'npm ci --ignore-scripts' "$root/athleto-supabase-validate.yml"
+          grep -F 'timeout-minutes: 15' "$root/athleto-supabase-validate.yml"
+
+          grep -F 'timeout-minutes: 20' "$root/claritas-sync-ci.yml"
+          grep -F 'timeout-minutes: 10' "$root/claritas-sync-trace.yml"
+
+          grep -F 'Validate every GitHub Actions workflow' "$root/athleto-infra-ci.yml"
+          grep -F 'Validate every GitHub Actions workflow' "$root/athleto-backend-ci.yml"
+          if grep -A4 -F 'Validate every GitHub Actions workflow' "$root/athleto-infra-ci.yml" | grep -F 'args:'; then
+            echo 'infra actionlint must use repository auto-discovery' >&2
+            exit 1
+          fi
+          if grep -A4 -F 'Validate every GitHub Actions workflow' "$root/athleto-backend-ci.yml" | grep -F 'args:'; then
+            echo 'backend actionlint must use repository auto-discovery' >&2
+            exit 1
+          fi
+
+          for f in "$root/sonus-ci.yml" "$root/sonus-phase0.yml"; do
+            grep -F 'dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30' "$f"
+            grep -F 'toolchain: 1.88.0' "$f"
+            grep -F 'GIT_CONFIG_COUNT' "$f"
+          done
+          grep -F 'GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.SONUS_AURIS_INTERFACES_TOKEN }}@github.com/.insteadOf' \
+            "$root/sonus-ci.yml"
+          grep -F 'export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"' \
+            "$root/sonus-phase0.yml"
+
+      - name: Prove no write/deploy authority was introduced
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/post-merge-ci-hardening'
+          if grep -REn 'permissions:[[:space:]]*$|contents:[[:space:]]+(write|admin)|pull-requests:[[:space:]]+write|id-token:[[:space:]]+write' "$root" \
+            | grep -E 'contents:[[:space:]]+(write|admin)|pull-requests:[[:space:]]+write|id-token:[[:space:]]+write'; then
+            echo 'unexpected write authority in audited workflow evidence' >&2
+            exit 1
+          fi
+          if grep -REn '(tofu|terraform)[[:space:]]+apply|wrangler[[:space:]]+deploy|kubectl[[:space:]]+apply|docker[[:space:]]+push' "$root"; then
+            echo 'unexpected deployment side effect in audited hardening workflows' >&2
+            exit 1
+          fi
