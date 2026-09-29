@@ -1,0 +1,36 @@
+name: Athlet-O infra #24 exact workflow proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/athleto-infra-24-proof.yml'
+      - 'evidence/athleto-infra-24/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify exact source blob and concurrency policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          file='evidence/athleto-infra-24/ci.yml'
+          test "$(git hash-object "$file")" = 'd33d9677e204d16dcb7e63d78db7e8c4ab14f4c3'
+          grep -F 'cancel-in-progress: true' "$file"
+          grep -F 'contents: read' "$file"
+          if grep -Ev '^[[:space:]]*#' "$file" | grep -E '(tofu|terraform)[[:space:]]+apply|wrangler[[:space:]]+deploy|kubectl[[:space:]]+apply'; then
+            echo 'unexpected deploy authority' >&2
+            exit 1
+          fi
+      - name: Actionlint exact source blob
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # v1.7.12
+        with:
+          args: evidence/athleto-infra-24/ci.yml
