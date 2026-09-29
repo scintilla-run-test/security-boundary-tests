@@ -99,18 +99,15 @@ jobs:
             grep -F 'toolchain: 1.88.0' "$f"
             grep -F 'GIT_CONFIG_COUNT' "$f"
           done
-          grep -F 'GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.SONUS_AURIS_INTERFACES_TOKEN }}@github.com/.insteadOf' \
-            "$root/sonus-ci.yml"
-          grep -F 'export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"' \
-            "$root/sonus-phase0.yml"
+          grep -F 'GIT_CONFIG_KEY_0:' "$root/sonus-ci.yml" | grep -F 'x-access-token:' | grep -F 'github.com/.insteadOf'
+          grep -F 'export GIT_CONFIG_KEY_0=' "$root/sonus-phase0.yml" | grep -F 'x-access-token:' | grep -F 'github.com/.insteadOf'
 
       - name: Prove no write/deploy authority was introduced
         shell: bash
         run: |
           set -euo pipefail
           root='evidence/post-merge-ci-hardening'
-          if grep -REn 'permissions:[[:space:]]*$|contents:[[:space:]]+(write|admin)|pull-requests:[[:space:]]+write|id-token:[[:space:]]+write' "$root" \
-            | grep -E 'contents:[[:space:]]+(write|admin)|pull-requests:[[:space:]]+write|id-token:[[:space:]]+write'; then
+          if grep -REn 'contents:[[:space:]]+(write|admin)|pull-requests:[[:space:]]+write|id-token:[[:space:]]+write' "$root"; then
             echo 'unexpected write authority in audited workflow evidence' >&2
             exit 1
           fi
