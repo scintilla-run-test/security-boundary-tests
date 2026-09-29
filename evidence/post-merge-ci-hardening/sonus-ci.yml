@@ -156,23 +156,13 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: typescript/package-lock.json
-
       - run: npm ci
-
-      # The generated TypeScript is vendored rather than depended on, because
-      # generated/typescript has no package.json upstream. This proves the
-      # vendored copy has not been hand-edited — the failure mode that produced
-      # the two drifted Flutter forks in #4.
       - name: Vendored interfaces are intact
         run: npm run check-vendor
-
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
 
-  # Randomized inputs through all three implementations, compared byte for byte.
-  # The corpus proves agreement on cases someone thought of; this proves it on
-  # cases nobody did. It found a panic in the Rust reference on its first run.
   differential:
     name: differential fuzz
     runs-on: ubuntu-latest
@@ -205,15 +195,11 @@ jobs:
         env: *private_git_auth
       - run: npm ci
         working-directory: typescript
-      # A fixed seed keeps the signal stable; run other seeds locally when
-      # changing a rule.
       - name: Fuzz all three implementations
         run: ./run.py --count 3000 --seed 1
         working-directory: conformance/differential
         env: *private_git_auth
 
-  # A single required check for branch protection, so a skipped or renamed job
-  # cannot quietly let a divergence through.
   conformance:
     name: all implementations agree
     runs-on: ubuntu-latest
