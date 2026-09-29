@@ -111,7 +111,10 @@ jobs:
             echo 'unexpected write authority in audited workflow evidence' >&2
             exit 1
           fi
-          if grep -REn '(tofu|terraform)[[:space:]]+apply|wrangler[[:space:]]+deploy|kubectl[[:space:]]+apply|docker[[:space:]]+push' "$root"; then
+          matches="$(grep -REn '(tofu|terraform)[[:space:]]+apply|wrangler[[:space:]]+deploy|kubectl[[:space:]]+apply|docker[[:space:]]+push' "$root" || true)"
+          effective="$(printf '%s\n' "$matches" | grep -Ev '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+          if [ -n "$effective" ]; then
+            printf '%s\n' "$effective" >&2
             echo 'unexpected deployment side effect in audited hardening workflows' >&2
             exit 1
           fi
