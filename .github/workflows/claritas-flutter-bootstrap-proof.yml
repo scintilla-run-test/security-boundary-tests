@@ -1,0 +1,59 @@
+name: Claritas Flutter bootstrap proof
+
+on:
+  push:
+    branches:
+      - proof/claritas-flutter-bootstrap-20260928
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  flutter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - name: Resolve and freeze package graph
+        working-directory: evidence/claritas-flutter-bootstrap
+        run: flutter pub get
+      - name: Prove frozen resolution
+        working-directory: evidence/claritas-flutter-bootstrap
+        run: flutter pub get --enforce-lockfile
+      - name: Check formatting
+        working-directory: evidence/claritas-flutter-bootstrap
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze
+        working-directory: evidence/claritas-flutter-bootstrap
+        run: flutter analyze
+      - name: Test
+        working-directory: evidence/claritas-flutter-bootstrap
+        run: flutter test
+      - name: Commit generated lockfile once
+        shell: bash
+        run: |
+          set -euo pipefail
+          path='evidence/claritas-flutter-bootstrap/pubspec.lock'
+          test -s "$path"
+          if [ -z "$(git status --porcelain -- "$path")" ]; then
+            echo 'lockfile already committed'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$path"
+          git commit -m 'test: materialize Claritas Flutter lockfile'
+          git push origin HEAD:proof/claritas-flutter-bootstrap-20260928
