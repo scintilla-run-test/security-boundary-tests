@@ -1,0 +1,71 @@
+name: infra CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Validate every GitHub Actions workflow
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # v1.7.12
+
+  tofu:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.4
+      - name: Format check
+        run: tofu -chdir=terraform fmt -check -recursive -diff
+      - name: Init
+        run: tofu -chdir=terraform init -backend=false
+      - name: Validate
+        run: tofu -chdir=terraform validate
+
+  test:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Edge invariant tests
+        run: node --test tests/edge-invariants.test.mjs
+
+  # Deliberately NOT present: a job that runs `tofu apply` or `wrangler
+  # deploy`. Applying edge configuration changes how production traffic is
+  # routed for every athlet-o property at once, including the k8s-cluster
+  # storefronts, and there is no staging zone to catch a mistake first.
+  # Review the plan, then apply from a workstation.
+  #
+  # The live header suite (npm run test:live) is likewise manual: it asserts
+  # the post-apply state and would fail on every PR until an apply happens.
