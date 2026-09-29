@@ -1,0 +1,19 @@
+{
+  "name": "@athlet-o/athleto-pub-lib-core",
+  "version": "0.1.0",
+  "description": "Athlet-O: pub-lib-core (TypeScript)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
