@@ -57,6 +57,8 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: tests/browser/package-lock.json
+      # Build the backend the browser suites spawn (the server helper also
+      # builds, so this just warms the cache and surfaces build errors early).
       - run: cargo build --locked
       - name: Install browser-test dependencies
         working-directory: tests/browser
