@@ -31,7 +31,9 @@ final class ClaritasSyncStatus extends StatelessWidget {
         }
         return 'Current · revision $revision';
       case ClaritasSyncState.failed:
-        return errorMessage == null ? 'Sync failed' : 'Sync failed · $errorMessage';
+        return errorMessage == null
+            ? 'Sync failed'
+            : 'Sync failed · $errorMessage';
     }
   }
 
