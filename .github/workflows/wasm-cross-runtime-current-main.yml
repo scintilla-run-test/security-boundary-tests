@@ -32,7 +32,7 @@ jobs:
             sha: 49a883262728cef5429c570832af9b506ae9279d
           - name: lunatic-cli
             repo: lunatic-lorry/ll-desktop-cli
-            sha: 58515e7c489fdf7a9d4190523e6cf660d3f7ca26
+            sha: 99773d6c378a0bf8a112c7c7b8f9520eb3c2b8b8
     steps:
       - name: Check out proof repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
