@@ -8,7 +8,7 @@ WASMX_CLI_SHA="5179e4db75ec9d4eaebd867860b73296979b88ff"
 LL_DAEMON_REPO="lunatic-lorry/ll-desktop-daemon"
 LL_DAEMON_SHA="49a883262728cef5429c570832af9b506ae9279d"
 LL_CLI_REPO="lunatic-lorry/ll-desktop-cli"
-LL_CLI_SHA="58515e7c489fdf7a9d4190523e6cf660d3f7ca26"
+LL_CLI_SHA="99773d6c378a0bf8a112c7c7b8f9520eb3c2b8b8"
 
 ROOT="${RUNNER_TEMP:-/tmp}/ores-cross-runtime-${RANDOM}-${RANDOM}"
 SRC="$ROOT/src"
