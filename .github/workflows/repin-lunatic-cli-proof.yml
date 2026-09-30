@@ -1,0 +1,41 @@
+name: repin-lunatic-cli-proof
+
+on:
+  push:
+    branches:
+      - proof/wasm-cross-runtime-current-main-20260930
+    paths:
+      - .github/workflows/repin-lunatic-cli-proof.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repin:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out proof branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: true
+
+      - name: Repin exact hardened Lunatic CLI revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          old='0b669a11477586123ccd2d4867739e101015623f'
+          new='58515e7c489fdf7a9d4190523e6cf660d3f7ca26'
+          grep -F "LL_CLI_SHA=\"${old}\"" scripts/wasm_cross_runtime_current_main.sh
+          sed -i "s/${old}/${new}/g" scripts/wasm_cross_runtime_current_main.sh
+          test "$(grep -c "$new" scripts/wasm_cross_runtime_current_main.sh)" -eq 1
+          test "$(grep -c "$old" scripts/wasm_cross_runtime_current_main.sh || true)" -eq 0
+
+      - name: Commit proof repin
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/wasm_cross_runtime_current_main.sh
+          git commit -m 'test: repin live proof to locked Lunatic CLI head'
+          git push origin HEAD:proof/wasm-cross-runtime-current-main-20260930
