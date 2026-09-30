@@ -1,0 +1,88 @@
+name: WASM cross-runtime current-main proof
+
+on:
+  push:
+    branches:
+      - proof/wasm-cross-runtime-current-main-20260930
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-cross-runtime-current-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  locked-source-matrix:
+    name: locked source / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: wasmx-daemon
+            repo: wasm-xprs/wasmx-desktop-daemon
+            sha: d8999b344ff5fdb703fb037a4dffeeda60baed36
+          - name: wasmx-cli
+            repo: wasm-xprs/wasmx-desktop-cli
+            sha: 5179e4db75ec9d4eaebd867860b73296979b88ff
+          - name: lunatic-daemon
+            repo: lunatic-lorry/ll-desktop-daemon
+            sha: 49a883262728cef5429c570832af9b506ae9279d
+          - name: lunatic-cli
+            repo: lunatic-lorry/ll-desktop-cli
+            sha: 0b669a11477586123ccd2d4867739e101015623f
+    steps:
+      - name: Check out proof repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Fetch exact product revision
+        env:
+          REPO: ${{ matrix.repo }}
+          SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/product"
+          git init -q "$dest"
+          git -C "$dest" remote add origin "https://github.com/${REPO}.git"
+          git -C "$dest" fetch -q --depth=1 origin "$SHA"
+          git -C "$dest" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$dest" rev-parse HEAD)" = "$SHA"
+          test -f "$dest/Cargo.lock" || {
+            echo "::error::${REPO}@${SHA} has no committed Cargo.lock; exact locked testing is impossible"
+            exit 1
+          }
+
+      - name: Check exact locked graph
+        run: cargo check --locked --all-targets --manifest-path "$RUNNER_TEMP/product/Cargo.toml"
+
+      - name: Test exact locked graph
+        run: cargo test --locked --all-targets --manifest-path "$RUNNER_TEMP/product/Cargo.toml"
+
+  live-cross-runtime:
+    name: live concurrent daemons and provenance boundaries
+    needs: locked-source-matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out proof repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+
+      - name: Run current-main live cross-runtime proof
+        run: bash scripts/wasm_cross_runtime_current_main.sh
