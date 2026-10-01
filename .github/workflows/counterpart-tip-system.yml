@@ -1,0 +1,46 @@
+name: Current counterpart security surface
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  counterpart-security:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: "${{ secrets.TEST_FLEET_GITHUB_TOKEN || github.token }}"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Audit current production boundary tips
+        shell: bash
+        run: |
+          set -euo pipefail
+          p="${GITHUB_REPOSITORY_OWNER%-test}"
+          mapfile -t repos < <(gh api --paginate "/orgs/$p/repos?type=all&per_page=100" --jq '.[] | select(.archived|not) | .name')
+          ((${#repos[@]})) || { echo "No production repositories visible; configure TEST_FLEET_GITHUB_TOKEN"; exit 1; }
+          seen=0
+          for r in "${repos[@]}"; do
+            case "$r" in *infra*|*interfaces*|*api*|*server*|*core*) ;; *) continue ;; esac
+            branch="$(gh api "/repos/$p/$r" --jq .default_branch)"
+            sha="$(gh api "/repos/$p/$r/commits/$branch" --jq .sha)"
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            paths="$(gh api "/repos/$p/$r/git/trees/$sha?recursive=1" --jq '.tree[]?.path' 2>/dev/null || true)"
+            [[ -n "$paths" ]] || continue
+            seen=$((seen + 1))
+            if grep -Eiq '(^|/)(\.env|id_rsa|id_ed25519)$|\.(pem|key)$|(^|/)terraform\.tfstate($|\.)' <<<"$paths"; then echo "Tracked secret/state material found in $p/$r" >&2; exit 1; fi
+            if gh api "/repos/$p/$r/contents/.ores-infra.toml?ref=$branch" >/dev/null 2>&1; then
+              gh api "/repos/$p/$r/contents/.ores-infra.toml?ref=$branch" --jq .content | tr -d '\n' | base64 --decode >/tmp/ores-infra.toml
+              grep -Eq '^modules_root[[:space:]]*=[[:space:]]*"modules"' /tmp/ores-infra.toml
+              grep -Eq '^environments_root[[:space:]]*=[[:space:]]*"environments"' /tmp/ores-infra.toml
+              grep -Eq '^secrets[[:space:]]*=[[:space:]]*"sops-age"' /tmp/ores-infra.toml
+            fi
+          done
+          ((seen > 0)) || { echo "No private boundary candidates visible; configure TEST_FLEET_GITHUB_TOKEN"; exit 1; }
+      - name: zed-pkg cross dependency canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/zed-pkg/zed-interfaces.git .deps/zed-interfaces
+          test -e .deps/zed-interfaces/Cargo.toml || test -e .deps/zed-interfaces/package.json || test -e .deps/zed-interfaces/pubspec.yaml
