@@ -1,0 +1,180 @@
+const MAX_BODY_BYTES = 16 * 1024;
+const MAX_PROVIDER_TOKEN_BYTES = 16 * 1024;
+const MAX_COOKIE_BYTES = 16 * 1024;
+const PROVIDER_TIMEOUT_MS = 8000;
+const SHARED_AUTH_TIMEOUT_MS = 8000;
+const JSON_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+};
+
+export default {
+  fetch(request, env) {
+    return handleRequest(request, env, fetch);
+  },
+};
+
+export async function handleRequest(request, env, fetchImpl) {
+  const url = new URL(request.url);
+  if (request.method === "OPTIONS") {
+    return corsPreflight(request, env);
+  }
+  if (url.pathname === "/healthz" || url.pathname === "/readyz") {
+    return json(200, { ok: true, component: "auth-provider-race" }, corsHeaders(request, env));
+  }
+  if (request.method !== "POST") {
+    return json(405, { error: "method_not_allowed" }, { ...corsHeaders(request, env), allow: "POST, OPTIONS" });
+  }
+  const operation = url.pathname === "/auth/sign-in"
+    ? "sign-in"
+    : url.pathname === "/auth/sign-up"
+      ? "sign-up"
+      : null;
+  if (operation === null) {
+    return json(404, { error: "not_found" }, corsHeaders(request, env));
+  }
+
+  let config;
+  try {
+    config = loadConfig(env);
+  } catch {
+    return json(503, { error: "auth_edge_misconfigured" }, corsHeaders(request, env));
+  }
+  const body = await readJsonBody(request);
+  if (body instanceof Response) {
+    return withCors(body, request, env);
+  }
+  const credentials = validateCredentials(body, operation);
+  if (credentials instanceof Response) {
+    return withCors(credentials, request, env);
+  }
+
+  const result = await raceProviders(operation, credentials, config, fetchImpl);
+  if (!result.ok) {
+    return json(result.status, { error: result.error }, corsHeaders(request, env));
+  }
+
+  const sharedPath = operation === "sign-up"
+    ? "/auth/providers/enroll"
+    : "/auth/providers/exchange";
+  const shared = await callSharedAuth(sharedPath, result, config, fetchImpl);
+  return withCors(shared, request, env);
+}
+
+export async function raceProviders(operation, credentials, config, fetchImpl) {
+  const startedAt = Date.now();
+  const supabasePromise = callSupabase(operation, credentials, config, fetchImpl)
+    .then((value) => ({ provider: "supabase", completed_ms: Date.now() - startedAt, ...value }));
+  const neonPromise = callNeon(operation, credentials, config, fetchImpl)
+    .then((value) => ({ provider: "neon", completed_ms: Date.now() - startedAt, ...value }));
+
+  // This is a latency race, not a trust race. Both arms always resolve before
+  // adjudication; no losing provider mutation is abandoned and no canonical
+  // session is minted until both provider proofs have been produced.
+  const [supabase, neon] = await Promise.all([supabasePromise, neonPromise]);
+  const failures = [supabase, neon].filter((result) => !result.ok);
+  if (failures.some((result) => result.kind === "unavailable")) {
+    return { ok: false, status: 503, error: "provider_unavailable" };
+  }
+  if (failures.some((result) => result.kind === "verification_required")) {
+    return { ok: false, status: 202, error: "verification_required" };
+  }
+  if (failures.length > 0) {
+    const conflict = operation === "sign-up" && failures.some((result) => result.kind === "conflict");
+    return {
+      ok: false,
+      status: conflict ? 409 : 401,
+      error: conflict ? "provider_account_conflict" : "invalid_credentials",
+    };
+  }
+  return {
+    ok: true,
+    supabase_access_token: supabase.access_token,
+    neon_access_token: neon.access_token,
+    first_provider: supabase.completed_ms <= neon.completed_ms ? "supabase" : "neon",
+  };
+}
+
+async function callSupabase(operation, credentials, config, fetchImpl) {
+  const target = new URL(
+    operation === "sign-in" ? "/auth/v1/token?grant_type=password" : "/auth/v1/signup",
+    config.supabaseUrl,
+  );
+  const payload = operation === "sign-in"
+    ? { email: credentials.email, password: credentials.password }
+    : {
+        email: credentials.email,
+        password: credentials.password,
+        data: credentials.name ? { display_name: credentials.name } : undefined,
+      };
+  return jsonTokenRequest(target, payload, {
+    apikey: config.supabasePublishableKey,
+    authorization: `Bearer ${config.supabasePublishableKey}`,
+  }, "supabase", operation, fetchImpl);
+}
+
+async function callNeon(operation, credentials, config, fetchImpl) {
+  const suffix = operation === "sign-in" ? "/sign-in/email" : "/sign-up/email";
+  const target = authUrl(config.neonAuthUrl, suffix);
+  const payload = operation === "sign-in"
+    ? { email: credentials.email, password: credentials.password }
+    : {
+        email: credentials.email,
+        password: credentials.password,
+        name: credentials.name ?? credentials.email.split("@")[0],
+      };
+
+  let response;
+  try {
+    response = await fetchImpl(target, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      redirect: "manual",
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+  const failure = classifyProviderFailure(response, operation);
+  if (failure !== null) {
+    return failure;
+  }
+
+  // Managed Better Auth signs the user in with an HTTP-only session cookie.
+  // The JWT plugin is a separate service-to-service credential. Never forward
+  // the Neon session cookie to Shared Auth or the browser: exchange it here for
+  // the short-lived EdDSA JWT that Shared Auth can verify against Neon JWKS.
+  const directJwt = response.headers.get("set-auth-jwt");
+  if (isProviderToken(directJwt)) {
+    return { ok: true, access_token: directJwt };
+  }
+  const cookie = cookieHeaderFrom(response.headers);
+  if (cookie === null) {
+    return operation === "sign-up"
+      ? { ok: false, kind: "verification_required" }
+      : { ok: false, kind: "unavailable" };
+  }
+
+  let tokenResponse;
+  try {
+    tokenResponse = await fetchImpl(authUrl(config.neonAuthUrl, "/token"), {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        cookie,
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+  if (!tokenResponse.ok) {
+    return { ok: false, kind: "unavailable" };
+  }

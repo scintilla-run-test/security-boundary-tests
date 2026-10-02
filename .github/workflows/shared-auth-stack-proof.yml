@@ -1,0 +1,128 @@
+name: Shared Auth exact-stack external proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shared-auth-stack-proof.yml'
+      - 'evidence/shared-auth-stack/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORES_COMPOSE_SHA: c52d08c875e73892acb88897c3b4a8969ad37ff2
+
+jobs:
+  worker-exact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out proof carrier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reconstruct exact private Worker source and prove blob identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/shared-auth-stack'
+          cat "$root/worker/src/index.part1" "$root/worker/src/index.part2" "$root/worker/src/index.part3" > "$root/worker/src/index.mjs"
+          expected_index="$(jq -r '.shared_auth_infra.files["workers/auth-provider-race/src/index.mjs"]' "$root/source-lock.json")"
+          expected_package="$(jq -r '.shared_auth_infra.files["workers/auth-provider-race/package.json"]' "$root/source-lock.json")"
+          expected_test="$(jq -r '.shared_auth_infra.files["workers/auth-provider-race/test/index.test.mjs"]' "$root/source-lock.json")"
+          test "$(git hash-object "$root/worker/src/index.mjs")" = "$expected_index"
+          test "$(git hash-object "$root/worker/package.json")" = "$expected_package"
+          test "$(git hash-object "$root/worker/test/index.test.mjs")" = "$expected_test"
+          echo 'private Worker source blobs match pinned shared-auth-infra head'
+      - name: Run source repo tests plus external hostile cases
+        working-directory: evidence/shared-auth-stack/worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts
+          npm run check
+          npm test
+
+  server-hardening:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out proof carrier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce immutable config and read-only login exchange
+        shell: python
+        run: |
+          from pathlib import Path
+
+          failures = []
+          neon = Path('evidence/shared-auth-stack/server/neon-registry.rs').read_text()
+          if 'std::env::var("AUTH_NEON_PROJECTS")' in neon or 'std::env::var("AUTH_NEON_AUTH_REGISTRY")' in neon:
+              failures.append('Neon registry bypasses immutable EnvMap with ambient std::env reads')
+
+          exchange = Path('evidence/shared-auth-stack/server/provider-exchange.rs').read_text()
+          mutators = [name for name in ('upsert_supabase_identity', 'upsert_neon', 'enroll_external_pair') if name in exchange]
+          if mutators:
+              failures.append(f'login exchange mutates provider identity state before proving the pair: {mutators}')
+
+          if failures:
+              for failure in failures:
+                  print(f'BLOCKER: {failure}')
+              raise SystemExit(1)
+          print('Shared Auth server hardening invariants: OK')
+
+  compose-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out proof carrier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out pinned ores-compose
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ores-compose
+          ref: ${{ env.ORES_COMPOSE_SHA }}
+          path: ores-compose
+          persist-credentials: false
+          show-progress: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prove exact topology snapshot and validate with ores-compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='evidence/shared-auth-stack'
+          expected="$(jq -r '.shared_auth_infra.files[".ores-compose.yaml"]' "$root/source-lock.json")"
+          test "$(git hash-object "$root/.ores-compose.yaml")" = "$expected"
+          test "$(git -C ores-compose rev-parse HEAD)" = "$ORES_COMPOSE_SHA"
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- --version
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- -V
+          mkdir -p evidence/shared-auth-server.rs "$root/workers/auth-provider-race"
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- check "$root/.ores-compose.yaml"
+          cargo run --quiet --manifest-path ores-compose/Cargo.toml -- plan "$root/.ores-compose.yaml" >/tmp/shared-auth-plan.txt
+          test -s /tmp/shared-auth-plan.txt
+
+  evidence-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out proof carrier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify source-lock authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock='evidence/shared-auth-stack/source-lock.json'
+          test "$(jq -r '.shared_auth_infra.commit_sha' "$lock")" = '0ace167bc82315c310d1fc2bba16e52d25bec79f'
+          test "$(jq -r '.shared_auth_server.commit_sha' "$lock")" = '9a05d5858a1db6e8de2a4f7f944c0109bf5023b9'
+          test "$(jq -r '.ores_compose.commit_sha' "$lock")" = "$ORES_COMPOSE_SHA"
+          jq -e '.shared_auth_infra.files | length == 4' "$lock" >/dev/null
+          jq -e '.shared_auth_server.files | length == 2' "$lock" >/dev/null
